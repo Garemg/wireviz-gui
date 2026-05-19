@@ -37,6 +37,8 @@ from wireviz_gui.images import (
     refresh_fill,
     slightlynybbled_logo_small,
 )
+from wireviz_gui.assembly_dialog import AssemblyManualDialog
+from wireviz_gui.assembly_export import export_manual_html, export_manual_pdf
 from wireviz_gui.mating_dialog import AddMateDialog
 from wireviz_gui.menus import Menu
 from wireviz_gui.syntax_help import SyntaxReferencePanel, SyntaxReferenceWindow
@@ -428,6 +430,7 @@ class InputOutputFrame(BaseFrame):
             on_click_set_image_path=self.set_image_path,
             on_click_syntax_help=self._on_syntax_help,
             on_click_edit_metadata=on_edit_metadata if on_edit_metadata else self._edit_metadata,
+            on_click_generate_manual=self.generate_assembly_manual,
         )
         self._button_frame.grid(row=r, column=0, sticky="ew")
 
@@ -698,6 +701,41 @@ class InputOutputFrame(BaseFrame):
 
         self._harness_view_frame.save_image(file_name)
 
+    def generate_assembly_manual(self):
+        """Open the assembly manual dialog and generate PDF/HTML."""
+        yaml_text = self._text_entry_frame.get()
+        if not yaml_text.strip():
+            showinfo("Manual", "No hay YAML para generar el manual.")
+            return
+
+        def on_generate(spec):
+            file_name = asksaveasfilename(
+                title="Guardar Manual de Ensamblaje",
+                defaultextension=".html",
+                filetypes=[
+                    ("HTML files", "*.html"),
+                    ("PDF files", "*.pdf"),
+                    ("All files", "*.*"),
+                ],
+            )
+            if not file_name:
+                return
+
+            try:
+                if file_name.lower().endswith(".pdf"):
+                    result = export_manual_pdf(spec, file_name)
+                else:
+                    result = export_manual_html(spec, file_name)
+                showinfo("Manual generado", f"Manual guardado en:\n{result}")
+            except Exception as e:
+                showerror("Error", f"Error generando manual:\n{e}")
+
+        AssemblyManualDialog(
+            self,
+            yaml_text=yaml_text,
+            on_generate_callback=on_generate,
+        )
+
     def export_all(self):
         file_name = asksaveasfilename(title="Export All Formats")
         if file_name is None or file_name.strip() == "":
@@ -952,6 +990,7 @@ class ButtonFrame(BaseFrame):
         on_click_set_image_path: Optional[Callable] = None,
         on_click_syntax_help: Optional[Callable] = None,
         on_click_edit_metadata: Optional[Callable] = None,
+        on_click_generate_manual: Optional[Callable] = None,
         loglevel=logging.INFO,
     ):
         super().__init__(parent, loglevel=loglevel)
@@ -1042,6 +1081,17 @@ class ButtonFrame(BaseFrame):
             )
             help_btn.grid(row=0, column=c, sticky="ew", padx=(4, 0))
             ToolTip(help_btn, "Mostrar/Ocultar Referencia de Sintaxis (F1)")
+
+        if on_click_generate_manual:
+            c += 1
+            manual_btn = tk.Button(
+                self, text="📋", font=("Arial", 11),
+                command=on_click_generate_manual,
+                width=2, cursor="hand2",
+                relief="flat", bg="#e8fee8", activebackground="#c5fdc5"
+            )
+            manual_btn.grid(row=0, column=c, sticky="ew", padx=(4, 0))
+            ToolTip(manual_btn, "Generar Manual de Ensamblaje")
 
 
 class TextEntryFrame(BaseFrame):
