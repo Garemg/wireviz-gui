@@ -763,12 +763,14 @@ class AddConnectionFrame(BaseFrame):
         parent,
         harness: Harness,
         on_save_callback: Optional[Callable] = None,
+        get_yaml_text: Optional[Callable] = None,
         loglevel=logging.INFO,
     ):
         super().__init__(parent, loglevel=loglevel)
 
         self._harness = harness
         self._on_save_callback = on_save_callback
+        self._get_yaml_text = get_yaml_text
 
         r = 0
         HeadLabel(
@@ -776,8 +778,7 @@ class AddConnectionFrame(BaseFrame):
             text="Add Connection",
         ).grid(row=r, column=0, columnspan=3, sticky="ew")
 
-        connectors = list(self._harness.connectors.keys())
-        cables = list(self._harness.cables.keys())
+        connectors, cables = self._read_names_from_yaml()
 
         r += 1
         NormLabel(
@@ -802,6 +803,13 @@ class AddConnectionFrame(BaseFrame):
 
         self._to_connector_cb = ttk.Combobox(self, values=connectors)
         self._to_connector_cb.grid(row=r, column=2, sticky="ew")
+
+        # Pre-select first items if available
+        if connectors:
+            self._from_connector_cb.set(connectors[0])
+            self._to_connector_cb.set(connectors[-1] if len(connectors) > 1 else connectors[0])
+        if cables:
+            self._through_cable_cb.set(cables[0])
 
         r += 1
         self._from_conn_pin_cb = ttk.Combobox(self)
@@ -828,6 +836,11 @@ class AddConnectionFrame(BaseFrame):
             pcb=self._to_conn_pin_cb: self._update_conn_pins(fcb, pcb),
         )
 
+        # Populate pin dropdowns for the pre-selected values
+        self._update_conn_pins(self._from_connector_cb, self._from_conn_pin_cb)
+        self._update_through_cable_pins()
+        self._update_conn_pins(self._to_connector_cb, self._to_conn_pin_cb)
+
         r += 1
         NormButton(
             self,
@@ -835,47 +848,165 @@ class AddConnectionFrame(BaseFrame):
             command=self._save,
         ).grid(row=r, column=0, columnspan=3, sticky="ew")
 
+    def _read_names_from_yaml(self):
+        """Read connector and cable names directly from the YAML text (source of truth)."""
+        connectors = []
+        cables = []
+        if self._get_yaml_text:
+            try:
+                import yaml
+                data = yaml.safe_load(self._get_yaml_text()) or {}
+                if isinstance(data.get("connectors"), dict):
+                    connectors = list(data["connectors"].keys())
+                if isinstance(data.get("cables"), dict):
+                    cables = list(data["cables"].keys())
+            except Exception:
+                pass
+        # Fallback to harness if YAML reading failed or wasn't provided
+        if not connectors:
+            connectors = list(self._harness.connectors.keys())
+        if not cables:
+            cables = list(self._harness.cables.keys())
+        return connectors, cables
+
+    def _get_connector_pins(self, connector_name):
+        """Get pin info for a connector, trying YAML first then harness."""
+        # Try harness first (has parsed pinlabels)
+        if connector_name in self._harness.connectors:
+            connector = self._harness.connectors[connector_name]
+            pinlabels = connector.pinlabels or []
+            if pinlabels:
+                return [f"{i + 1}: {label}" for i, label in enumerate(pinlabels)]
+            if connector.pincount:
+                return [str(i + 1) for i in range(connector.pincount)]
+        # Fallback: read from YAML
+        if self._get_yaml_text:
+            try:
+                import yaml
+                data = yaml.safe_load(self._get_yaml_text()) or {}
+                conn_data = data.get("connectors", {}).get(connector_name, {})
+                if isinstance(conn_data, dict):
+                    pinlabels = conn_data.get("pinlabels", [])
+                    if pinlabels:
+                        return [f"{i + 1}: {label}" for i, label in enumerate(pinlabels)]
+                    pincount = conn_data.get("pincount", 0)
+                    if pincount:
+                        return [str(i + 1) for i in range(pincount)]
+            except Exception:
+                pass
+        return []
+
+    def _get_cable_wirecount(self, cable_name):
+        """Get wire count for a cable, trying harness first then YAML."""
+        if cable_name in self._harness.cables:
+            cable = self._harness.cables[cable_name]
+            return cable.wirecount
+        # Fallback: read from YAML
+        if self._get_yaml_text:
+            try:
+                import yaml
+                data = yaml.safe_load(self._get_yaml_text()) or {}
+                cable_data = data.get("cables", {}).get(cable_name, {})
+                if isinstance(cable_data, dict):
+                    # wirecount can be explicit or inferred from colors
+                    wc = cable_data.get("wirecount", 0)
+                    if not wc:
+                        colors = cable_data.get("colors", [])
+                        if colors:
+                            wc = len(colors)
+                    return wc or 0
+            except Exception:
+                pass
+        return 0
+
     def _update_conn_pins(self, conn_cb, pin_cb):
         key = conn_cb.get()
-        if key in self._harness.connectors:
-            pins = self._harness.connectors[key].pinlabels
-            pin_cb["values"] = pins
+        values = self._get_connector_pins(key)
+        pin_cb["values"] = values
+        if values:
+            pin_cb.set(values[0])
 
     def _update_through_cable_pins(self):
         name = self._through_cable_cb.get()
-        if name in self._harness.cables:
-            wire_numbers = [i + 1 for i in range(self._harness.cables[name].wirecount)]
-            self._through_cable_pin["values"] = wire_numbers
+        wirecount = self._get_cable_wirecount(name)
+        wire_numbers = [str(i + 1) for i in range(wirecount)]
+        self._through_cable_pin["values"] = wire_numbers
+        if wire_numbers:
+            self._through_cable_pin.set(wire_numbers[0])
+
+    def refresh_dropdowns(self):
+        """Re-read connectors and cables from the YAML text. Called when the dialog regains focus."""
+        connectors, cables = self._read_names_from_yaml()
+
+        current_from = self._from_connector_cb.get()
+        current_through = self._through_cable_cb.get()
+        current_to = self._to_connector_cb.get()
+
+        self._from_connector_cb["values"] = connectors
+        self._through_cable_cb["values"] = cables
+        self._to_connector_cb["values"] = connectors
+
+        # Restore previous selection if still valid, else default to first available
+        if current_from in connectors:
+            self._from_connector_cb.set(current_from)
+        elif connectors:
+            self._from_connector_cb.set(connectors[0])
+            self._update_conn_pins(self._from_connector_cb, self._from_conn_pin_cb)
+
+        if current_through in cables:
+            self._through_cable_cb.set(current_through)
+        elif cables:
+            self._through_cable_cb.set(cables[0])
+            self._update_through_cable_pins()
+
+        if current_to in connectors:
+            self._to_connector_cb.set(current_to)
+        elif connectors:
+            new_to = connectors[-1] if len(connectors) > 1 else connectors[0]
+            self._to_connector_cb.set(new_to)
+            self._update_conn_pins(self._to_connector_cb, self._to_conn_pin_cb)
+
+    def _parse_pin_selection(self, value: str):
+        """Extract pin number/label from a combobox value like '1: 5V' or '1'."""
+        value = value.strip()
+        if not value:
+            return None
+        # Format "N: label" → extract N as int
+        if ": " in value:
+            try:
+                return int(value.split(":")[0].strip())
+            except ValueError:
+                pass
+        # Plain number
+        try:
+            return int(value)
+        except ValueError:
+            return value  # Return as string label if not numeric
 
     def _save(self):
-        from_name = self._from_connector_cb.get()
-        via_name = self._through_cable_cb.get()
-        to_name = self._to_connector_cb.get()
+        from_name = self._from_connector_cb.get().strip()
+        via_name = self._through_cable_cb.get().strip()
+        to_name = self._to_connector_cb.get().strip()
 
         if not from_name or not via_name or not to_name:
-            showerror("Invalid Input", "All fields are required")
+            showerror("Invalid Input", "You must select From connector, Through cable, and To connector.")
             return
 
-        from_pin = self._from_conn_pin_cb.get()
-        try:
-            from_pin = int(from_pin)
-        except ValueError:
-            pass
+        from_pin = self._parse_pin_selection(self._from_conn_pin_cb.get())
+        via_pin = self._parse_pin_selection(self._through_cable_pin.get())
+        to_pin = self._parse_pin_selection(self._to_conn_pin_cb.get())
 
-        via_pin = self._through_cable_pin.get()
-        try:
-            via_pin = int(via_pin)
-        except ValueError:
-            pass
+        if from_pin is None:
+            showerror("Invalid Input", f"Select a pin for the From connector ({from_name}).")
+            return
+        if via_pin is None:
+            showerror("Invalid Input", f"Select a wire for the cable ({via_name}).")
+            return
+        if to_pin is None:
+            showerror("Invalid Input", f"Select a pin for the To connector ({to_name}).")
+            return
 
-        to_pin = self._to_conn_pin_cb.get()
-        try:
-            to_pin = int(to_pin)
-        except ValueError:
-            pass
-
-        # Construct connection list
-        # Format: [{from: pin}, {via: pin}, {to: pin}]
+        # Construct connection list: [{from: pin}, {via: pin}, {to: pin}]
         connection_list = [
             {from_name: from_pin},
             {via_name: via_pin},
@@ -884,3 +1015,74 @@ class AddConnectionFrame(BaseFrame):
 
         if self._on_save_callback is not None:
             self._on_save_callback(connection_list)
+
+
+class MetadataDialog(tk.Toplevel):
+    """Simple dialog to edit the metadata: section of the YAML document."""
+
+    def __init__(self, parent, current_metadata: dict, on_save_callback: Callable,
+                 loglevel=logging.INFO):
+        super().__init__(parent)
+        self.title("Editar Metadatos del Documento")
+        self.resizable(True, False)
+        self.grab_set()  # modal
+
+        self._on_save = on_save_callback
+
+        pad = dict(padx=8, pady=4)
+
+        tk.Label(self, text="Metadatos del documento", font=("Arial", 11, "bold")).grid(
+            row=0, column=0, columnspan=2, sticky="w", **pad)
+
+        fields = [
+            ("Título:",       "title",       False),
+            ("Descripción:",  "description", False),
+            ("Notas:",        "notes",       True),
+        ]
+        self._vars: dict = {}
+
+        for r, (label, key, multiline) in enumerate(fields, start=1):
+            tk.Label(self, text=label, anchor="e").grid(
+                row=r, column=0, sticky="e", **pad)
+            if multiline:
+                frame = tk.Frame(self)
+                frame.grid(row=r, column=1, sticky="ew", **pad)
+                sb = tk.Scrollbar(frame, orient="vertical")
+                sb.pack(side="right", fill="y")
+                widget = tk.Text(frame, height=4, width=40, yscrollcommand=sb.set,
+                                 wrap="word")
+                widget.pack(side="left", fill="both", expand=True)
+                sb.config(command=widget.yview)
+                if current_metadata.get(key):
+                    widget.insert("1.0", str(current_metadata[key]))
+                self._vars[key] = widget
+            else:
+                var = tk.StringVar(value=str(current_metadata.get(key, "") or ""))
+                entry = tk.Entry(self, textvariable=var, width=40)
+                entry.grid(row=r, column=1, sticky="ew", **pad)
+                self._vars[key] = var
+
+        self.grid_columnconfigure(1, weight=1)
+
+        r = len(fields) + 1
+        btn_frame = tk.Frame(self)
+        btn_frame.grid(row=r, column=0, columnspan=2, sticky="e", **pad)
+        tk.Button(btn_frame, text="Guardar", width=10,
+                  command=self._save).pack(side="left", padx=4)
+        tk.Button(btn_frame, text="Cancelar", width=10,
+                  command=self.destroy).pack(side="left")
+
+        self.bind("<Escape>", lambda _: self.destroy())
+        self.after(50, lambda: self.lift())
+
+    def _save(self):
+        result = {}
+        for key, widget in self._vars.items():
+            if isinstance(widget, tk.Text):
+                val = widget.get("1.0", "end-1c").strip()
+            else:
+                val = widget.get().strip()
+            if val:
+                result[key] = val
+        self._on_save(result)
+        self.destroy()

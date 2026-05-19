@@ -1,4 +1,6 @@
+import json
 import logging
+import sys
 import tkinter as tk
 from io import BytesIO
 from pathlib import Path
@@ -22,6 +24,7 @@ from wireviz_gui.dialogs import (
     AddCableFrame,
     AddConnectionFrame,
     AddConnectorFrame,
+    MetadataDialog,
 )
 from wireviz_gui.examples import EXAMPLES
 from wireviz_gui.images import (
@@ -30,11 +33,13 @@ from wireviz_gui.images import (
     folder_transfer_fill,
     links_fill,
     logo,
+    map_pin_add_fill,
     refresh_fill,
     slightlynybbled_logo_small,
 )
 from wireviz_gui.mating_dialog import AddMateDialog
 from wireviz_gui.menus import Menu
+from wireviz_gui.syntax_help import SyntaxReferencePanel, SyntaxReferenceWindow
 
 
 def preprocess_yaml_data(data):
@@ -124,6 +129,88 @@ def preprocess_yaml_data(data):
 normalize_connections = preprocess_yaml_data
 
 
+
+
+class _CloseableNotebook(ttk.Notebook):
+    """ttk.Notebook that shows a ✕ close button inside each tab label.
+
+    Clicking the ✕ part of a tab label calls on_close(index).
+    """
+
+    _SUFFIX = "  ✕"
+
+    def __init__(self, parent, on_close=None, **kwargs):
+        super().__init__(parent, **kwargs)
+        self._on_close = on_close
+        self.bind("<Button-1>", self._check_close_click, add=True)
+
+    # Override add() to append ✕ suffix
+    def add(self, child, **kwargs):
+        if "text" in kwargs and not kwargs["text"].endswith(self._SUFFIX):
+            kwargs["text"] = kwargs["text"] + self._SUFFIX
+        super().add(child, **kwargs)
+
+    # Override tab() to keep ✕ suffix on text updates
+    def tab(self, tab_id, option=None, **kwargs):
+        if "text" in kwargs and not kwargs["text"].endswith(self._SUFFIX):
+            kwargs["text"] = kwargs["text"] + self._SUFFIX
+        return super().tab(tab_id, option, **kwargs)
+
+    def _check_close_click(self, event):
+        """Detect clicks on the ✕ area (rightmost ~20px of a tab label)."""
+        if self.identify(event.x, event.y) != "label":
+            return
+        try:
+            idx = self.index(f"@{event.x},{event.y}")
+        except tk.TclError:
+            return
+        # Scan right to find the right edge of this tab (within 24px)
+        x = event.x + 1
+        limit = event.x + 24
+        while x <= limit:
+            try:
+                if self.index(f"@{x},{event.y}") != idx:
+                    # Right edge found; click must be within 18px of it
+                    if x - event.x <= 18 and self._on_close:
+                        self._on_close(idx)
+                    return
+            except tk.TclError:
+                # Past all tabs → right edge of last tab
+                if x - event.x <= 18 and self._on_close:
+                    self._on_close(idx)
+                return
+            x += 1
+
+
+class _RecentFiles:
+    """Manages a persistent list of recently opened/saved files."""
+    _MAX = 10
+    _CONFIG_DIR = Path.home() / ".wireviz-gui"
+    _FILE = _CONFIG_DIR / "recent_files.json"
+
+    def load(self) -> list:
+        try:
+            if self._FILE.exists():
+                data = json.loads(self._FILE.read_text(encoding="utf-8"))
+                return [p for p in data if Path(p).exists()][:self._MAX]
+        except Exception:
+            pass
+        return []
+
+    def add(self, filepath: str):
+        files = self.load()
+        path = str(Path(filepath).resolve())
+        if path in files:
+            files.remove(path)
+        files.insert(0, path)
+        files = files[:self._MAX]
+        try:
+            self._CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            self._FILE.write_text(json.dumps(files, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+
 class Application(tk.Tk):
     def __init__(self, loglevel=logging.INFO, **kwargs):
         self._logger = logging.getLogger(self.__class__.__name__)
@@ -132,6 +219,7 @@ class Application(tk.Tk):
         super().__init__(**kwargs)
 
         self.title(f"wireviz-gui {__version__}")
+        self._recent_files_mgr = _RecentFiles()
 
         self._icon = tk.PhotoImage(data=slightlynybbled_logo_small)
         self.tk.call("wm", "iconphoto", self._w, self._icon)
@@ -141,8 +229,18 @@ class Application(tk.Tk):
         self._title_frame.grid(row=r, column=0, sticky="ew")
 
         r += 1
-        self._notebook = ttk.Notebook(self)
-        self._notebook.grid(row=r, column=0, sticky="news")
+        # Main content: horizontal paned window (tabs | syntax reference)
+        self._main_paned = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
+        self._main_paned.grid(row=r, column=0, sticky="news")
+
+        self._notebook = _CloseableNotebook(
+            self._main_paned, on_close=self._close_tab_by_index
+        )
+        self._main_paned.add(self._notebook, weight=3)
+
+        self._syntax_panel = SyntaxReferencePanel(self._main_paned, compact=True)
+        self._main_paned.add(self._syntax_panel, weight=1)
+        self._syntax_visible = True
 
         # Configure grid expansion
         self.grid_rowconfigure(r, weight=1)
@@ -174,13 +272,18 @@ class Application(tk.Tk):
             if self.get_active_frame()
             else None,
             about=self._about,
+            syntax_reference=self._open_syntax_reference,
             new_file=lambda: self.add_tab(),
             load_example=self.add_tab,
             close_tab=self.close_current_tab,
             examples=EXAMPLES,
+            recent_files=self._recent_files_mgr.load(),
+            open_recent=self._open_recent_file,
+            get_recent_files=self._recent_files_mgr.load,
         )
         self.config(menu=self._menu)
 
+        self.bind_all("<F1>", lambda _: self._open_syntax_reference())
         self.bind_all(
             "<Control-n>",
             lambda _: self.add_tab(),
@@ -212,6 +315,29 @@ class Application(tk.Tk):
         top.title("About")
         AboutFrame(top).grid()
 
+    def _open_syntax_reference(self):
+        """Toggle the embedded syntax reference panel."""
+        try:
+            if self._syntax_visible:
+                self._main_paned.remove(self._syntax_panel)
+                self._syntax_visible = False
+            else:
+                self._main_paned.add(self._syntax_panel, weight=1)
+                self._syntax_visible = True
+        except Exception:
+            pass
+
+    def _open_recent_file(self, filepath: str):
+        """Open a file from the recent files list in a new tab."""
+        path = Path(filepath)
+        if not path.exists():
+            showerror("File Not Found", f"The file no longer exists:\n{filepath}")
+            return
+        frame = self.add_tab(title=path.name, filepath=filepath)
+        if frame:
+            frame._text_entry_frame.load(path.read_text(encoding="utf-8"))
+            frame.parse_text()
+
     def get_active_frame(self):
         try:
             tab_id = self._notebook.select()
@@ -222,11 +348,21 @@ class Application(tk.Tk):
             return None
 
     def add_tab(self, title="Untitled", content=None, filepath=None):
-        frame = InputOutputFrame(self._notebook)
+        def on_title_change(new_title):
+            try:
+                self._notebook.tab(frame, text=new_title)
+            except tk.TclError:
+                pass
+
+        frame = InputOutputFrame(
+            self._notebook,
+            on_title_change=on_title_change,
+            on_syntax_help=self._open_syntax_reference,
+            on_file_opened=self._recent_files_mgr.add,
+        )
 
         if content:
-            frame._text_entry_frame.clear()
-            frame._text_entry_frame.append(content)
+            frame._text_entry_frame.load(content)
             frame.parse_text()
 
         if filepath:
@@ -240,8 +376,18 @@ class Application(tk.Tk):
         active_tab = self.get_active_frame()
         if active_tab:
             active_tab.destroy()
+        if not self._notebook.tabs():
+            self.add_tab()
 
-        # If no tabs left, create a default one
+    def _close_tab_by_index(self, index: int):
+        """Close a specific tab by its notebook index (called from tab ✕ button)."""
+        try:
+            tabs = self._notebook.tabs()
+            if 0 <= index < len(tabs):
+                widget = self._notebook.nametowidget(tabs[index])
+                widget.destroy()
+        except Exception:
+            pass
         if not self._notebook.tabs():
             self.add_tab()
 
@@ -257,10 +403,16 @@ class TitleFrame(BaseFrame):
 
 
 class InputOutputFrame(BaseFrame):
-    def __init__(self, parent, loglevel=logging.INFO):
+    def __init__(self, parent, on_title_change=None, on_syntax_help=None,
+                 on_edit_metadata=None, on_file_opened=None,
+                 loglevel=logging.INFO):
         super().__init__(parent, loglevel=loglevel)
 
         self._current_file_path = None
+        self._custom_image_paths = []
+        self._on_title_change = on_title_change
+        self._on_syntax_help = on_syntax_help
+        self._on_file_opened = on_file_opened
         self._harness = Harness(Metadata(), Options(), Tweak())
 
         r = 0
@@ -273,6 +425,9 @@ class InputOutputFrame(BaseFrame):
             on_click_save_image=self.save_graph_image,
             on_click_export=self.export_all,
             on_click_refresh=self.parse_text,
+            on_click_set_image_path=self.set_image_path,
+            on_click_syntax_help=self._on_syntax_help,
+            on_click_edit_metadata=on_edit_metadata if on_edit_metadata else self._edit_metadata,
         )
         self._button_frame.grid(row=r, column=0, sticky="ew")
 
@@ -297,6 +452,10 @@ class InputOutputFrame(BaseFrame):
 
         self._paned_window.add(self._text_entry_frame, weight=1)
         self._paned_window.add(self._harness_view_frame, weight=3)
+
+        r += 1
+        self._status_bar = _StatusBar(self)
+        self._status_bar.grid(row=r, column=0, sticky="ew")
 
     def _update_yaml_section(self, section, new_data):
         current_text = self._text_entry_frame.get()
@@ -331,13 +490,11 @@ class InputOutputFrame(BaseFrame):
 
                 data[section].update(new_data)
 
-            # Clear the text entry and insert the updated YAML
-            self._text_entry_frame.clear()
-            # Use sort_keys=False to preserve insertion order where possible (PyYAML 5.1+)
-            self._text_entry_frame.append(
+            # Replace as one undo-able operation (Ctrl+Z can revert an "Add" action)
+            self._text_entry_frame.replace(
                 yaml.dump(data, default_flow_style=False, sort_keys=False)
             )
-            self.parse_text()
+            self.parse_text(silent=True)
 
         except yaml.YAMLError as e:
             showerror("YAML Error", f"Error processing existing YAML: {e}")
@@ -371,7 +528,14 @@ class InputOutputFrame(BaseFrame):
             top.destroy()
             self._update_yaml_section("connections", connection_data)
 
-        AddConnectionFrame(top, harness=self._harness, on_save_callback=on_save).grid()
+        dialog = AddConnectionFrame(
+            top, harness=self._harness,
+            on_save_callback=on_save,
+            get_yaml_text=self._text_entry_frame.get,
+        )
+        dialog.grid()
+        # Refresh dropdowns whenever the dialog regains focus (harness may have been updated)
+        top.bind("<FocusIn>", lambda _: dialog.refresh_dropdowns())
 
     def add_mate(self):
         top = ToplevelBase(self)
@@ -381,7 +545,9 @@ class InputOutputFrame(BaseFrame):
             top.destroy()
             self._update_yaml_section("connections", mate_data)
 
-        AddMateDialog(top, harness=self._harness, on_save_callback=on_save).grid()
+        dialog = AddMateDialog(top, harness=self._harness, on_save_callback=on_save, get_yaml_text=self._text_entry_frame.get)
+        dialog.grid()
+        top.bind("<FocusIn>", lambda _: dialog.refresh_dropdowns())
 
     def open_file(self):
         file_name = askopenfilename(
@@ -393,10 +559,14 @@ class InputOutputFrame(BaseFrame):
         try:
             with open(file_name, "r", encoding="utf-8") as f:
                 content = f.read()
-            self._text_entry_frame.clear()
-            self._text_entry_frame.append(content)
+            self._text_entry_frame.load(content)
             self._current_file_path = file_name
+            if self._on_title_change:
+                self._on_title_change(Path(file_name).name)
+            self._status_bar.set_file(file_name)
             self.parse_text()
+            if self._on_file_opened:
+                self._on_file_opened(file_name)
         except Exception as e:
             showerror("Open Error", f"Could not open file:\n{e}")
 
@@ -405,13 +575,47 @@ class InputOutputFrame(BaseFrame):
             try:
                 with open(self._current_file_path, "r", encoding="utf-8") as f:
                     content = f.read()
-                self._text_entry_frame.clear()
-                self._text_entry_frame.append(content)
+                self._text_entry_frame.load(content)
                 self.parse_text()
             except Exception as e:
                 showerror("Reload Error", f"Could not reload file:\n{e}")
         else:
             showinfo("Reload Info", "No file to reload.")
+
+    def _image_paths(self):
+        """Return image search paths: open file dir + user-configured dirs."""
+        paths = []
+        if self._current_file_path:
+            paths.append(Path(self._current_file_path).parent.resolve())
+        for p in self._custom_image_paths:
+            rp = Path(p).resolve()
+            if rp not in paths:
+                paths.append(rp)
+        return paths
+
+    def set_image_path(self):
+        from tkinter.filedialog import askdirectory
+        folder = askdirectory(title="Select image search folder")
+        if folder:
+            path = Path(folder).resolve()
+            if path not in [Path(p).resolve() for p in self._custom_image_paths]:
+                self._custom_image_paths.append(path)
+            self._status_bar.set_image_path(str(path))
+            self.parse_text(silent=True)
+
+    def _edit_metadata(self):
+        """Open metadata editor dialog and update the YAML on save."""
+        current_text = self._text_entry_frame.get()
+        try:
+            data = yaml.safe_load(current_text) or {}
+        except Exception:
+            data = {}
+        current_meta = data.get("metadata", {}) or {}
+
+        def on_save(new_meta):
+            self._update_yaml_section("metadata", new_meta)
+
+        MetadataDialog(self, current_metadata=current_meta, on_save_callback=on_save)
 
     def save_file(self):
         if self._current_file_path:
@@ -423,7 +627,7 @@ class InputOutputFrame(BaseFrame):
             try:
                 data = yaml.safe_load(yaml_input)
                 data = normalize_connections(data)
-                parse(inp=data, return_types=("harness",))
+                parse(inp=data, return_types=("harness",), image_paths=self._image_paths())
             except YAMLError as e:
                 showerror("Save Error", f"Invalid YAML content:\n{e}")
                 return
@@ -448,7 +652,7 @@ class InputOutputFrame(BaseFrame):
         try:
             data = yaml.safe_load(yaml_input)
             data = normalize_connections(data)
-            parse(inp=data, return_types=("harness",))
+            parse(inp=data, return_types=("harness",), image_paths=self._image_paths())
         except YAMLError as e:
             showerror("Save Error", f"Invalid YAML content:\n{e}")
             return
@@ -467,6 +671,11 @@ class InputOutputFrame(BaseFrame):
             with open(file_name, "w", encoding="utf-8") as f:
                 f.write(yaml_input)
             self._current_file_path = file_name
+            if self._on_title_change:
+                self._on_title_change(Path(file_name).name)
+            self._status_bar.set_file(file_name)
+            if self._on_file_opened:
+                self._on_file_opened(file_name)
         except Exception as e:
             showerror("Save Error", f"Could not save file:\n{e}")
 
@@ -511,6 +720,7 @@ class InputOutputFrame(BaseFrame):
                         "html",
                         "tsv",
                     ),
+                    image_paths=self._image_paths(),
                 )
             except (ExecutableNotFound, FileNotFoundError):
                 showerror(
@@ -523,23 +733,24 @@ class InputOutputFrame(BaseFrame):
                 showerror("Error", f"An unexpected error occurred:\n{e}")
                 return
 
-    def parse_text(self):
+    def parse_text(self, silent=False):
         """
-        This is where the data is read from the text entry and parsed into an image
-        :return:
+        This is where the data is read from the text entry and parsed into an image.
+        silent=True suppresses error popups (used during auto-refresh while typing).
         """
         yaml_input = self._text_entry_frame.get()
         if yaml_input.strip() != "":
             try:
                 data = yaml.safe_load(yaml_input)
                 data = normalize_connections(data)
-                png_data, new_harness = parse(inp=data, return_types=("png", "harness"))
+                png_data, new_harness = parse(inp=data, return_types=("png", "harness"), image_paths=self._image_paths())
                 self._harness.connectors = new_harness.connectors
                 self._harness.cables = new_harness.cables
                 self._harness.mates = new_harness.mates
                 self._harness.additional_bom_items = new_harness.additional_bom_items
 
                 self.refresh_view(png_data)
+                self._status_bar.set_status(ok=True)
             except YAMLError as e:
                 lines = str(e).lower()
                 for line in lines.split("\n"):
@@ -552,17 +763,35 @@ class InputOutputFrame(BaseFrame):
                         error_line = part.split(" ")[1]
                         self._text_entry_frame.highlight_line(error_line)
                         break
-                showerror("Parse Error", f"Input is invalid: {e}")
+                self._status_bar.set_status(ok=False, message=f"YAML: {str(e)[:80]}")
+                if not silent:
+                    showerror("Parse Error", f"Input is invalid: {e}")
                 return
             except (ExecutableNotFound, FileNotFoundError):
-                showerror(
-                    "Error",
-                    "Graphviz executable not found; Make sure that the "
-                    "executable is installed and in your system PATH",
-                )
+                self._status_bar.set_status(ok=False, message="Graphviz not found in PATH")
+                if not silent:
+                    showerror(
+                        "Error",
+                        "Graphviz executable not found; Make sure that the "
+                        "executable is installed and in your system PATH",
+                    )
                 return
             except Exception as e:
-                showerror("Error", f"An unexpected error occurred:\n{e}")
+                msg = str(e)
+                # Provide a specific hint when an image file can't be found
+                if "not found in any of the following locations" in msg and not self._current_file_path:
+                    self._status_bar.set_status(ok=False, message="Image not found – use File > Open or the 📍 button")
+                    if not silent:
+                        showerror(
+                            "Image not found",
+                            f"{msg}\n\nTo resolve this, either:\n"
+                            "• Use File > Open to open the .yaml file from its folder\n"
+                            "• Or click the 📍 button in the toolbar to set the image search folder"
+                        )
+                else:
+                    self._status_bar.set_status(ok=False, message=msg[:100])
+                    if not silent:
+                        showerror("Error", f"An unexpected error occurred:\n{e}")
                 return
 
         self._text_entry_frame.highlight_line(None)
@@ -666,6 +895,49 @@ class StructureViewFrame(BaseFrame):
             self._on_update_callback()
 
 
+class _StatusBar(BaseFrame):
+    """Thin bar at the bottom of each tab showing file path and parse status."""
+
+    def __init__(self, parent, loglevel=logging.INFO):
+        super().__init__(parent, loglevel=loglevel)
+        self.configure(bg="#f0f0f0", relief="sunken", bd=1)
+
+        self._file_label = tk.Label(
+            self, text="No file open", anchor="w",
+            bg="#f0f0f0", font=("Arial", 9), fg="#666666"
+        )
+        self._file_label.grid(row=0, column=0, sticky="ew", padx=6, pady=2)
+
+        self._status_label = tk.Label(
+            self, text="", anchor="e",
+            bg="#f0f0f0", font=("Arial", 9, "bold")
+        )
+        self._status_label.grid(row=0, column=1, sticky="e", padx=6, pady=2)
+
+        self.grid_columnconfigure(0, weight=1)
+
+    def set_file(self, filepath: str):
+        self._img_hint = ""
+        self._filepath = str(filepath)
+        self._update_file_label()
+
+    def set_image_path(self, path: str):
+        self._img_hint = f"  |  img: {path}"
+        self._update_file_label()
+
+    def _update_file_label(self):
+        base = getattr(self, "_filepath", "No file open")
+        hint = getattr(self, "_img_hint", "")
+        self._file_label.configure(text=f"{base}{hint}", fg="#333333")
+
+    def set_status(self, ok: bool, message: str = ""):
+        if ok:
+            self._status_label.configure(text="\u2714 OK", fg="#007700")
+        else:
+            short = message[:70] if message else "Error"
+            self._status_label.configure(text=f"\u2718 {short}", fg="#cc0000")
+
+
 class ButtonFrame(BaseFrame):
     def __init__(
         self,
@@ -677,6 +949,9 @@ class ButtonFrame(BaseFrame):
         on_click_save_image: Callable,
         on_click_export: Callable,
         on_click_refresh: Callable,
+        on_click_set_image_path: Optional[Callable] = None,
+        on_click_syntax_help: Optional[Callable] = None,
+        on_click_edit_metadata: Optional[Callable] = None,
         loglevel=logging.INFO,
     ):
         super().__init__(parent, loglevel=loglevel)
@@ -706,7 +981,7 @@ class ButtonFrame(BaseFrame):
         ToolTip(add_connection_btn, "Add Connection")
 
         c += 1
-        self._add_mate_img = tk.PhotoImage(data=links_fill)
+        self._add_mate_img = tk.PhotoImage(data=add_box_fill)
         add_mate_btn = tk.Button(
             self, image=self._add_mate_img, command=on_click_add_mate
         )
@@ -719,14 +994,15 @@ class ButtonFrame(BaseFrame):
             self, image=self._export_img, command=on_click_save_image
         )
         save_img_btn.grid(row=0, column=c, sticky="ew")
-        ToolTip(save_img_btn, "Save Graph Image")
+        ToolTip(save_img_btn, "Save Graph Image (PNG)")
 
         c += 1
+        self._export_all_img = tk.PhotoImage(data=folder_transfer_fill)
         export_img_btn = tk.Button(
-            self, image=self._export_img, command=on_click_export
+            self, image=self._export_all_img, command=on_click_export
         )
         export_img_btn.grid(row=0, column=c, sticky="ew")
-        ToolTip(export_img_btn, "Export All")
+        ToolTip(export_img_btn, "Export All (PNG, SVG, HTML, TSV)")
 
         c += 1
         self._refresh_img = tk.PhotoImage(data=refresh_fill)
@@ -734,7 +1010,38 @@ class ButtonFrame(BaseFrame):
             self, image=self._refresh_img, command=on_click_refresh
         )
         refresh_img_btn.grid(row=0, column=c, sticky="ew")
-        ToolTip(refresh_img_btn, "Refresh Image")
+        ToolTip(refresh_img_btn, "Refresh (Ctrl+L)")
+
+        if on_click_set_image_path:
+            c += 1
+            self._imgpath_img = tk.PhotoImage(data=map_pin_add_fill)
+            imgpath_btn = tk.Button(
+                self, image=self._imgpath_img, command=on_click_set_image_path
+            )
+            imgpath_btn.grid(row=0, column=c, sticky="ew")
+            ToolTip(imgpath_btn, "Set image search folder")
+
+        if on_click_edit_metadata:
+            c += 1
+            meta_btn = tk.Button(
+                self, text="≡", font=("Arial", 11, "bold"),
+                command=on_click_edit_metadata,
+                width=2, cursor="hand2",
+                relief="flat", bg="#f0ede0", activebackground="#ddd8c0"
+            )
+            meta_btn.grid(row=0, column=c, sticky="ew", padx=(4, 0))
+            ToolTip(meta_btn, "Editar Metadatos del documento")
+
+        if on_click_syntax_help:
+            c += 1
+            help_btn = tk.Button(
+                self, text="?", font=("Arial", 11, "bold"),
+                command=on_click_syntax_help,
+                width=2, cursor="hand2",
+                relief="flat", bg="#e8f0fe", activebackground="#c5d8fd"
+            )
+            help_btn.grid(row=0, column=c, sticky="ew", padx=(4, 0))
+            ToolTip(help_btn, "Mostrar/Ocultar Referencia de Sintaxis (F1)")
 
 
 class TextEntryFrame(BaseFrame):
@@ -747,21 +1054,146 @@ class TextEntryFrame(BaseFrame):
         super().__init__(parent, loglevel=loglevel)
 
         self._on_update_callback = on_update_callback
+        self._after_id = None
 
-        self._text = tk.Text(self)
+        # ── Line numbers canvas (column 0) ────────────────────────────────
+        self._line_canvas = tk.Canvas(
+            self, width=38, bg="#f5f5f5", bd=0, highlightthickness=0, cursor="arrow"
+        )
+        self._line_canvas.grid(row=0, column=0, sticky="ns")
+        # Thin separator line on the right edge of the gutter
+        self._line_canvas.bind("<Configure>", lambda _: self._update_line_numbers())
+
+        # ── Vertical scrollbar (column 2) ─────────────────────────────────
+        self._v_scroll = tk.Scrollbar(self, orient="vertical")
+        self._v_scroll.grid(row=0, column=2, sticky="ns")
+
+        # ── Horizontal scrollbar (row 1, column 1) ────────────────────────
+        self._h_scroll = tk.Scrollbar(self, orient="horizontal")
+        self._h_scroll.grid(row=1, column=1, sticky="ew")
+
+        # ── Text widget (column 1) ────────────────────────────────────────
+        self._text = tk.Text(
+            self,
+            undo=True,
+            autoseparators=True,
+            maxundo=-1,
+            wrap="none",
+            yscrollcommand=self._on_text_vscroll,
+            xscrollcommand=self._h_scroll.set,
+        )
         self._text.grid(row=0, column=1, sticky="news")
-        self._text.bind("<Control-l>", lambda _: self._updated())
-        self._text.tag_config("highlight", background="yellow")
+        self._v_scroll.configure(command=self._on_vscroll_cmd)
+        self._h_scroll.configure(command=self._text.xview)
+
+        self._text.bind("<Control-l>", self._on_ctrl_l)
+        self._text.bind("<KeyRelease>", self._on_key_release)
+        # Redo: Ctrl+Y and Ctrl+Shift+Z (Ctrl+Z undo is native with undo=True)
+        self._text.bind("<Control-y>", lambda e: self._redo())
+        self._text.bind("<Control-Shift-Z>", lambda e: self._redo())
+        self._text.tag_config("highlight", background="#FFEB3B")
+
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=1)  # text column expands
+
+    def _on_text_vscroll(self, *args):
+        """Called when text widget scrolls; update scrollbar and line numbers."""
+        self._v_scroll.set(*args)
+        self._update_line_numbers()
+
+    def _on_vscroll_cmd(self, *args):
+        """Called when scrollbar moves; update text and line numbers."""
+        self._text.yview(*args)
+        self._update_line_numbers()
+
+    def _update_line_numbers(self):
+        """Redraw line numbers to match the current visible area."""
+        self._line_canvas.delete("all")
+        # Draw right-edge separator
+        w = self._line_canvas.winfo_width()
+        self._line_canvas.create_line(w - 1, 0, w - 1, self._line_canvas.winfo_height(),
+                                       fill="#cccccc")
+        try:
+            i = self._text.index("@0,0")
+            while True:
+                dline = self._text.dlineinfo(i)
+                if dline is None:
+                    break
+                y = dline[1]
+                ln = i.split(".")[0]
+                self._line_canvas.create_text(
+                    w - 4, y + dline[3] // 2,
+                    anchor="e", text=ln,
+                    fill="#888888", font=("Consolas", 9),
+                )
+                i = self._text.index(f"{i}+1line")
+                if self._text.compare(i, ">=", "end"):
+                    break
+        except Exception:
+            pass
+
+    def _on_key_release(self, _event):
+        self._trigger_update(immediate=False)
+        self._update_line_numbers()
+
+    def _on_ctrl_l(self, _event):
+        self._trigger_update(immediate=True)
+        return "break"
+
+    def _redo(self):
+        try:
+            self._text.edit_redo()
+        except tk.TclError:
+            pass
 
     def associate_callback(self, on_update_callback: Callable):
         self._on_update_callback = on_update_callback
 
-    def _updated(self):
+    def _trigger_update(self, immediate=False):
+        if self._after_id is not None:
+            self.after_cancel(self._after_id)
+            self._after_id = None
+        if immediate:
+            self._fire_callback(silent=False)
+        else:
+            self._after_id = self.after(700, lambda: self._fire_callback(silent=True))
+
+    def _fire_callback(self, silent=False):
+        self._after_id = None
         if self._on_update_callback is not None:
-            self._on_update_callback()
+            try:
+                self._on_update_callback(silent=silent)
+            except TypeError:
+                self._on_update_callback()
+
+    def _updated(self):
+        self._fire_callback(silent=False)
 
     def get(self):
         return self._text.get("1.0", "end")
+
+    def load(self, text: str):
+        """Load fresh content (e.g. from file). Clears the undo history."""
+        if self._after_id is not None:
+            self.after_cancel(self._after_id)
+            self._after_id = None
+        self._text.delete("1.0", "end")
+        self._text.insert("1.0", text)
+        self._text.edit_reset()
+        self.after(10, self._update_line_numbers)
+
+    def replace(self, text: str):
+        """Replace all content as a single undo-able operation (for programmatic updates)."""
+        if self._after_id is not None:
+            self.after_cancel(self._after_id)
+            self._after_id = None
+        self._text.config(autoseparators=False)
+        self._text.edit_separator()
+        self._text.delete("1.0", "end")
+        self._text.insert("1.0", text)
+        self._text.edit_separator()
+        self._text.config(autoseparators=True)
+        self.after(10, self._update_line_numbers)
 
     def append(self, text: str):
         self._text.insert("end", text)

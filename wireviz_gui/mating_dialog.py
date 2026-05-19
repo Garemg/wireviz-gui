@@ -15,12 +15,14 @@ class AddMateDialog(BaseFrame):
         parent,
         harness: Harness,
         on_save_callback: Optional[Callable] = None,
+        get_yaml_text: Optional[Callable] = None,
         loglevel=logging.INFO,
     ):
         super().__init__(parent, loglevel=loglevel)
 
         self._harness = harness
         self._on_save_callback = on_save_callback
+        self._get_yaml_text = get_yaml_text
 
         r = 0
         HeadLabel(
@@ -33,20 +35,21 @@ class AddMateDialog(BaseFrame):
             self,
             text="From:",
         ).grid(row=r, column=0, sticky="e")
-        self._from_connector_cb = ttk.Combobox(
-            self, values=list(self._harness.connectors.keys())
-        )
+        connectors = self._read_connectors()
+        self._from_connector_cb = ttk.Combobox(self, values=connectors)
         self._from_connector_cb.grid(row=r, column=1, sticky="ew")
+        if connectors:
+            self._from_connector_cb.set(connectors[0])
 
         r += 1
         NormLabel(
             self,
             text="To:",
         ).grid(row=r, column=0, sticky="e")
-        self._to_connector_cb = ttk.Combobox(
-            self, values=list(self._harness.connectors.keys())
-        )
+        self._to_connector_cb = ttk.Combobox(self, values=connectors)
         self._to_connector_cb.grid(row=r, column=1, sticky="ew")
+        if connectors:
+            self._to_connector_cb.set(connectors[-1] if len(connectors) > 1 else connectors[0])
 
         r += 1
         self._arrow_type_var = tk.StringVar(value="double")
@@ -96,6 +99,30 @@ class AddMateDialog(BaseFrame):
                 variable=self._arrow_direction_var,
                 value=direction,
             ).pack(side="left", expand=True)
+
+    def _read_connectors(self):
+        """Read connector names from YAML text (source of truth)."""
+        if self._get_yaml_text:
+            try:
+                import yaml
+                data = yaml.safe_load(self._get_yaml_text()) or {}
+                if isinstance(data.get("connectors"), dict):
+                    return list(data["connectors"].keys())
+            except Exception:
+                pass
+        return list(self._harness.connectors.keys())
+
+    def refresh_dropdowns(self):
+        """Re-read connectors from the YAML. Called when the dialog regains focus."""
+        connectors = self._read_connectors()
+        current_from = self._from_connector_cb.get()
+        current_to = self._to_connector_cb.get()
+        self._from_connector_cb["values"] = connectors
+        self._to_connector_cb["values"] = connectors
+        if current_from not in connectors and connectors:
+            self._from_connector_cb.set(connectors[0])
+        if current_to not in connectors and connectors:
+            self._to_connector_cb.set(connectors[-1] if len(connectors) > 1 else connectors[0])
 
     def _save(self):
         from_connector = self._from_connector_cb.get()
