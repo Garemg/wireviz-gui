@@ -80,10 +80,10 @@ body {
     align-items: center;
     border-bottom: 2px solid #0d1b2a;
     padding: 6px 14px;
-    min-height: 44px;
+    min-height: 62px;
     background: #fff;
 }
-.header-logo img { height: 46px; max-height: 46px; }
+.header-logo img { height: 70px; max-height: 70px; }
 .header-logo-text {
     font-size: 20pt;
     font-weight: 900;
@@ -101,7 +101,9 @@ body {
 /* ── Content ── */
 .content {
     flex: 1;
-    padding: 14px 16px 36px 16px;
+    padding: 14px 16px 10px 16px;
+    display: flex;
+    flex-direction: column;
 }
 .step-header {
     display: flex;
@@ -204,20 +206,23 @@ body {
 .strip-dim { text-align: center; }
 /* ── Images ── */
 .images-grid {
+    flex: 1;
     display: flex;
     flex-wrap: wrap;
-    gap: 10px;
-    margin: 12px 0;
+    gap: 8px;
+    margin: 8px 0 0 0;
     justify-content: center;
+    align-items: center;
+    align-content: center;
 }
 .images-grid img {
-    max-width: 80%;
-    max-height: 320px;
+    max-width: 100%;
+    max-height: 200mm;
     border: 1px solid #ccc;
     border-radius: 4px;
     object-fit: contain;
     display: block;
-    margin: 4px auto;
+    margin: 2px auto;
 }
 /* ── Footer ── */
 .footer {

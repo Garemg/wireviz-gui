@@ -92,6 +92,17 @@ def _make_thumbnail(path: str, size: int = 80) -> ImageTk.PhotoImage:
     return ImageTk.PhotoImage(img)
 
 
+def _make_thumbnail_from_uri(data_uri: str, size: int = 80) -> ImageTk.PhotoImage:
+    """Decode a data URI and return a thumbnail PhotoImage (no disk access needed)."""
+    if "," not in data_uri:
+        raise ValueError("Invalid data URI")
+    b64 = data_uri.split(",", 1)[1]
+    raw = base64.b64decode(b64)
+    img = Image.open(io.BytesIO(raw))
+    img.thumbnail((size, size), Image.LANCZOS)
+    return ImageTk.PhotoImage(img)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # _BlockWidget  – one step/block
 # ─────────────────────────────────────────────────────────────────────────────
@@ -111,7 +122,10 @@ class _BlockWidget(tk.LabelFrame):
     }
 
     def __init__(self, parent, block: ManualBlock, index: int, total: int,
-                 on_up: Callable, on_down: Callable, on_delete: Callable, **kwargs):
+                 on_up: Callable, on_down: Callable, on_delete: Callable,
+                 on_drag_start: Optional[Callable] = None,
+                 on_drag_motion: Optional[Callable] = None,
+                 on_drag_end: Optional[Callable] = None, **kwargs):
         bg = self._TYPE_COLORS.get(block.block_type, "#f0f0f0")
         super().__init__(parent, bg=bg, relief="ridge", bd=2, **kwargs)
 
@@ -123,6 +137,15 @@ class _BlockWidget(tk.LabelFrame):
         # ── Title bar ──────────────────────────────────────────────────────
         bar = tk.Frame(self, bg=_NAVY)
         bar.pack(fill=tk.X)
+
+        # Drag handle (☰)
+        if on_drag_start:
+            dh = tk.Label(bar, text="☰", bg=_NAVY, fg="#aaa",
+                          cursor="fleur", font=("Arial", 13), padx=4)
+            dh.pack(side=tk.LEFT, pady=2)
+            dh.bind("<ButtonPress-1>",   lambda e: on_drag_start(index, e))
+            dh.bind("<B1-Motion>",        lambda e: on_drag_motion(index, e))
+            dh.bind("<ButtonRelease-1>", lambda e: on_drag_end(index, e))
 
         # Step number badge
         tk.Label(bar, text=f" {index+1} ", bg=_RED, fg="white",
@@ -223,7 +246,11 @@ class _BlockWidget(tk.LabelFrame):
                             relief="ridge", bd=1)
             cell.pack(side=tk.LEFT, padx=4, pady=2)
             try:
-                thumb = _make_thumbnail(img_data["path"])
+                _path = img_data.get("path", "")
+                if _path and Path(_path).is_file():
+                    thumb = _make_thumbnail(_path)
+                else:
+                    thumb = _make_thumbnail_from_uri(img_data.get("data_uri", ""))
                 self._thumb_refs.append(thumb)
                 tk.Label(cell, image=thumb, bg="white").pack()
             except Exception:
@@ -263,6 +290,8 @@ class AssemblyManualDialog(ToplevelBase):
         self._on_generate = on_generate_callback
         self._block_data: list = default_blocks_from_yaml(yaml_text)
         self._block_widgets: list = []   # explicit widget tracking to avoid winfo_children issues
+        self._drag_idx: Optional[int] = None
+        self._drop_line: Optional[tk.Frame] = None
 
         self._build_ui()
 
@@ -371,6 +400,9 @@ class AssemblyManualDialog(ToplevelBase):
                 on_up=lambda i=i: self._move(i, -1),
                 on_down=lambda i=i: self._move(i, +1),
                 on_delete=lambda i=i: self._delete_block(i),
+                on_drag_start=self._drag_start,
+                on_drag_motion=self._drag_motion,
+                on_drag_end=self._drag_end,
             )
             bw.pack(fill=tk.X, padx=4, pady=4)
             self._block_widgets.append(bw)
@@ -447,7 +479,14 @@ class AssemblyManualDialog(ToplevelBase):
         self._autor_var.set(spec.autor)
         self._fecha_var.set(spec.fecha)
         self._block_data = spec.blocks
-        self._rebuild_blocks()
+        try:
+            self._rebuild_blocks()
+        except Exception as exc:
+            showerror("Error al reconstruir bloques", str(exc))
+            return
+        self.update_idletasks()
+        self._on_frame_configure()
+        self._canvas.yview_moveto(0)
 
     # ── Export actions ─────────────────────────────────────────────────────
 
@@ -498,6 +537,68 @@ class AssemblyManualDialog(ToplevelBase):
         except Exception as exc:
             showerror("Error", f"Error al exportar:\n{exc}")
 
+    # ── Drag-to-reorder ──────────────────────────────────────────────────────
+
+    def _drag_start(self, idx: int, event):
+        self._drag_idx = idx
+
+    def _drag_motion(self, idx: int, event):
+        if self._drag_idx is None:
+            return
+        target = self._get_drop_target(event.y_root)
+        self._show_drop_line(target)
+        # Auto-scroll when dragging near canvas edges
+        cy_top = self._canvas.winfo_rooty()
+        cy_bot = cy_top + self._canvas.winfo_height()
+        if event.y_root < cy_top + 40:
+            self._canvas.yview_scroll(-1, "units")
+        elif event.y_root > cy_bot - 40:
+            self._canvas.yview_scroll(1, "units")
+
+    def _drag_end(self, idx: int, event):
+        if self._drag_idx is None:
+            return
+        src = self._drag_idx
+        self._drag_idx = None
+        self._hide_drop_line()
+        target = self._get_drop_target(event.y_root)
+        if target == src:
+            return
+        self._collect_current()
+        block = self._block_data.pop(src)
+        insert_at = target if target <= src else target - 1
+        self._block_data.insert(max(0, insert_at), block)
+        self._rebuild_blocks()
+
+    def _get_drop_target(self, y_root: int) -> int:
+        if not self._block_widgets:
+            return 0
+        frame_top = self._block_frame.winfo_rooty()
+        scroll_frac = self._canvas.yview()[0]
+        frame_h = max(self._block_frame.winfo_height(), 1)
+        y_local = y_root - frame_top + scroll_frac * frame_h
+        for i, w in enumerate(self._block_widgets):
+            if y_local < w.winfo_y() + w.winfo_height() * 0.5:
+                return i
+        return len(self._block_widgets) - 1
+
+    def _show_drop_line(self, target: int):
+        if self._drop_line is None:
+            self._drop_line = tk.Frame(self._block_frame, height=3, bg="#e30613")
+        if not self._block_widgets:
+            return
+        if target < len(self._block_widgets):
+            w = self._block_widgets[target]
+            y = w.winfo_y() - 3
+        else:
+            w = self._block_widgets[-1]
+            y = w.winfo_y() + w.winfo_height() + 1
+        self._drop_line.place(x=0, y=y, relwidth=1.0, height=3)
+
+    def _hide_drop_line(self):
+        if self._drop_line is not None:
+            self._drop_line.place_forget()
+
     # ── Canvas scroll helpers ──────────────────────────────────────────────
 
     def _on_frame_configure(self, _event=None):
@@ -507,6 +608,8 @@ class AssemblyManualDialog(ToplevelBase):
         self._canvas.itemconfig(self._canvas_window, width=event.width)
 
     def _on_mousewheel(self, event):
+        if isinstance(event.widget, tk.Text):
+            return  # Let Text widgets handle their own scrolling
         self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
 
