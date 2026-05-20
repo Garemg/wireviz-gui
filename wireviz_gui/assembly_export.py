@@ -196,8 +196,7 @@ body {
 .images-grid img {
     max-width: 100%;
     max-height: 200mm;
-    border: 1px solid #ccc;
-    border-radius: 4px;
+    border: none;
     object-fit: contain;
     display: block;
     margin: 2px auto;
