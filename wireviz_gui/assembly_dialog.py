@@ -392,6 +392,7 @@ class AssemblyManualDialog(ToplevelBase):
                 w.destroy()
             except Exception:
                 pass
+        self._drop_line = None  # was a child of _block_frame, now destroyed
 
         total = len(self._block_data)
         for i, block in enumerate(self._block_data):
@@ -597,7 +598,11 @@ class AssemblyManualDialog(ToplevelBase):
 
     def _hide_drop_line(self):
         if self._drop_line is not None:
-            self._drop_line.place_forget()
+            try:
+                self._drop_line.place_forget()
+            except Exception:
+                pass
+            self._drop_line = None
 
     # ── Canvas scroll helpers ──────────────────────────────────────────────
 

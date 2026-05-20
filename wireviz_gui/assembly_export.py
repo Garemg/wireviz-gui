@@ -80,10 +80,10 @@ body {
     align-items: center;
     border-bottom: 2px solid #0d1b2a;
     padding: 6px 14px;
-    min-height: 62px;
+    min-height: 80px;
     background: #fff;
 }
-.header-logo img { height: 70px; max-height: 70px; }
+.header-logo img { height: 90px; max-height: 90px; }
 .header-logo-text {
     font-size: 20pt;
     font-weight: 900;
@@ -91,9 +91,9 @@ body {
     letter-spacing: -1px;
 }
 .header-ref {
-    border: 2px solid #0d1b2a;
-    padding: 5px 14px;
-    font-size: 11pt;
+    border: 3px solid #0d1b2a;
+    padding: 8px 20px;
+    font-size: 14pt;
     font-weight: bold;
     color: #0d1b2a;
     letter-spacing: 0.5px;
@@ -182,28 +182,6 @@ body {
     font-weight: bold;
     color: #155724;
 }
-/* ── Strip diagram ── */
-.strip-diagram {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0;
-    margin: 16px auto;
-    width: fit-content;
-}
-.strip-sheath { background: #333; height: 22px; border-radius: 3px 0 0 3px; min-width: 60px; }
-.strip-insulation { background: #aaa; height: 22px; min-width: 20px; }
-.strip-conductor { background: #cc8800; height: 22px; border-radius: 0 3px 3px 0; min-width: 8px; }
-.strip-label-row {
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-    font-size: 8pt;
-    color: #0066cc;
-    gap: 0;
-    margin-top: 2px;
-}
-.strip-dim { text-align: center; }
 /* ── Images ── */
 .images-grid {
     flex: 1;
@@ -279,23 +257,6 @@ _PAGE_TEMPLATE = r"""
         {% if block.fields.camisa_mm %}<tr><th>Desforre camisa hilos</th><td>{{ block.fields.camisa_mm }} mm</td></tr>{% endif %}
         {% if block.fields.programa_peladora %}<tr><th>Programa peladora</th><td>{{ block.fields.programa_peladora }}</td></tr>{% endif %}
       </table>
-      {% if block.fields.funda_mm and block.fields.camisa_mm %}
-      {% set fw = [block.fields.funda_mm | float * 3, 20] | max | int %}
-      {% set cw = [block.fields.camisa_mm | float * 3, 10] | max | int %}
-      <div style="text-align:center; margin:14px 0;">
-        <div style="display:inline-block;">
-          <div class="strip-diagram">
-            <div class="strip-sheath" style="width:{{ fw }}px;"></div>
-            <div class="strip-insulation" style="width:{{ fw }}px;"></div>
-            <div class="strip-conductor" style="width:{{ cw }}px;"></div>
-          </div>
-          <div class="strip-label-row">
-            <div class="strip-dim" style="width:{{ fw }}px;">← {{ block.fields.funda_mm }} mm →</div>
-            <div class="strip-dim" style="width:{{ cw }}px;">← {{ block.fields.camisa_mm }} mm →</div>
-          </div>
-        </div>
-      </div>
-      {% endif %}
 
     {# ── CRIMPADO ── #}
     {% elif block.block_type == "Crimpado" %}
