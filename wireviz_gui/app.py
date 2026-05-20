@@ -38,7 +38,7 @@ from wireviz_gui.images import (
     slightlynybbled_logo_small,
 )
 from wireviz_gui.assembly_dialog import AssemblyManualDialog
-from wireviz_gui.assembly_export import export_manual_html, export_manual_pdf
+from wireviz_gui.assembly_export import export_manual_zip
 from wireviz_gui.mating_dialog import AddMateDialog
 from wireviz_gui.menus import Menu
 from wireviz_gui.syntax_help import SyntaxReferencePanel, SyntaxReferenceWindow
@@ -702,39 +702,12 @@ class InputOutputFrame(BaseFrame):
         self._harness_view_frame.save_image(file_name)
 
     def generate_assembly_manual(self):
-        """Open the assembly manual dialog and generate PDF/HTML."""
+        """Open the assembly manual dialog."""
         yaml_text = self._text_entry_frame.get()
         if not yaml_text.strip():
             showinfo("Manual", "No hay YAML para generar el manual.")
             return
-
-        def on_generate(spec):
-            file_name = asksaveasfilename(
-                title="Guardar Manual de Ensamblaje",
-                defaultextension=".html",
-                filetypes=[
-                    ("HTML files", "*.html"),
-                    ("PDF files", "*.pdf"),
-                    ("All files", "*.*"),
-                ],
-            )
-            if not file_name:
-                return
-
-            try:
-                if file_name.lower().endswith(".pdf"):
-                    result = export_manual_pdf(spec, file_name)
-                else:
-                    result = export_manual_html(spec, file_name)
-                showinfo("Manual generado", f"Manual guardado en:\n{result}")
-            except Exception as e:
-                showerror("Error", f"Error generando manual:\n{e}")
-
-        AssemblyManualDialog(
-            self,
-            yaml_text=yaml_text,
-            on_generate_callback=on_generate,
-        )
+        AssemblyManualDialog(self, yaml_text=yaml_text)
 
     def export_all(self):
         file_name = asksaveasfilename(title="Export All Formats")
