@@ -19,6 +19,8 @@ from wireviz_gui.assembly_spec import (
     ManualBlock,
     default_blocks_from_yaml,
     default_fields_for,
+    load_spec,
+    save_spec,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -141,7 +143,7 @@ class _BlockWidget(tk.LabelFrame):
         tk.Button(bar, text="▲", command=on_up,     **btn_cfg).pack(side=tk.RIGHT, pady=2)
         tk.Button(bar, text="▼", command=on_down,   **btn_cfg).pack(side=tk.RIGHT, pady=2)
         tk.Button(bar, text="✕", command=on_delete,
-                  fg="#ff9999", **{**btn_cfg, "fg": "#ff9999"}).pack(side=tk.RIGHT, pady=2, padx=(0, 4))
+                  **{**btn_cfg, "fg": "#ff9999"}).pack(side=tk.RIGHT, pady=2, padx=(0, 4))
 
         # ── Fields ─────────────────────────────────────────────────────────
         fields_frame = tk.Frame(self, bg=bg)
@@ -322,6 +324,12 @@ class AssemblyManualDialog(ToplevelBase):
         btn_row = tk.Frame(self, bg=_LGRAY, pady=6)
         btn_row.pack(fill=tk.X, padx=8)
 
+        tk.Button(btn_row, text="📂 Abrir",
+                  font=("Arial", 10), bg="#555", fg="white", relief="flat",
+                  command=self._load_spec).pack(side=tk.LEFT, padx=6)
+        tk.Button(btn_row, text="💾 Guardar",
+                  font=("Arial", 10), bg="#555", fg="white", relief="flat",
+                  command=self._save_spec).pack(side=tk.LEFT, padx=2)
         tk.Button(btn_row, text="⟳ Vista previa HTML",
                   font=("Arial", 10), bg="#005580", fg="white", relief="flat",
                   command=self._preview).pack(side=tk.LEFT, padx=6)
@@ -394,6 +402,52 @@ class AssemblyManualDialog(ToplevelBase):
             self._canvas.after(100, lambda: self._canvas.yview_moveto(1.0))
         except Exception as exc:
             showerror("Error", f"No se pudo añadir el bloque '{block_type}':\n{exc}")
+
+    # ── Save / Load (.wam) ─────────────────────────────────────────────────
+
+    def _save_spec(self):
+        from tkinter.filedialog import asksaveasfilename
+        from tkinter.messagebox import showinfo
+        spec = self._build_spec()
+        default_name = spec.referencia.replace(" ", "_") or "manual"
+        path = asksaveasfilename(
+            title="Guardar proyecto de manual",
+            defaultextension=".wam",
+            initialfile=f"{default_name}.wam",
+            filetypes=[("Wireviz Assembly Manual", "*.wam"), ("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            save_spec(spec, path)
+            showinfo("Guardado", f"Proyecto guardado en:\n{path}")
+        except Exception as exc:
+            showerror("Error al guardar", str(exc))
+
+    def _load_spec(self):
+        from tkinter.filedialog import askopenfilename
+        from tkinter.messagebox import askyesno
+        path = askopenfilename(
+            title="Abrir proyecto de manual",
+            filetypes=[("Wireviz Assembly Manual", "*.wam"), ("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        if self._block_data and not askyesno(
+            "Confirmar", "Se reemplazará el manual actual.\n¿Continuar?"
+        ):
+            return
+        try:
+            spec = load_spec(path)
+        except Exception as exc:
+            showerror("Error al abrir", str(exc))
+            return
+        self._ref_var.set(spec.referencia)
+        self._rev_var.set(spec.revision)
+        self._autor_var.set(spec.autor)
+        self._fecha_var.set(spec.fecha)
+        self._block_data = spec.blocks
+        self._rebuild_blocks()
 
     # ── Export actions ─────────────────────────────────────────────────────
 

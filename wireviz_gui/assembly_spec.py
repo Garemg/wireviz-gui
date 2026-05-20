@@ -154,3 +154,60 @@ def default_blocks_from_yaml(yaml_text: str) -> list:
     blocks.append(ManualBlock(block_type="Test", title="Test de funcionamiento", fields=default_fields_for("Test")))
     blocks.append(ManualBlock(block_type="Embalaje", title="Embalaje", fields=default_fields_for("Embalaje")))
     return blocks
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Serialization: save / load  (.wam – Wireviz Assembly Manual, JSON format)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def spec_to_dict(spec: "AssemblyManualSpec") -> dict:
+    return {
+        "referencia": spec.referencia,
+        "revision": spec.revision,
+        "fecha": spec.fecha,
+        "autor": spec.autor,
+        "blocks": [
+            {
+                "block_type": b.block_type,
+                "title": b.title,
+                "fields": b.fields,
+                "images": b.images,
+            }
+            for b in spec.blocks
+        ],
+    }
+
+
+def spec_from_dict(data: dict) -> "AssemblyManualSpec":
+    blocks = [
+        ManualBlock(
+            block_type=b["block_type"],
+            title=b.get("title", b["block_type"]),
+            fields=b.get("fields", {}),
+            images=b.get("images", []),
+        )
+        for b in data.get("blocks", [])
+    ]
+    return AssemblyManualSpec(
+        referencia=data.get("referencia", ""),
+        revision=data.get("revision", "A"),
+        fecha=data.get("fecha", ""),
+        autor=data.get("autor", ""),
+        blocks=blocks,
+    )
+
+
+def save_spec(spec: "AssemblyManualSpec", path: str) -> None:
+    """Save an AssemblyManualSpec to a .wam (JSON) file.
+    Images are stored as data URIs so the file is fully self-contained."""
+    import json
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(spec_to_dict(spec), fh, ensure_ascii=False, indent=2)
+
+
+def load_spec(path: str) -> "AssemblyManualSpec":
+    """Load an AssemblyManualSpec from a .wam (JSON) file."""
+    import json
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    return spec_from_dict(data)
