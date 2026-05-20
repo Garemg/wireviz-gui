@@ -68,14 +68,20 @@ def _labeled_textarea(parent, label: str, row: int, default: str = "") -> tk.Str
     return text  # type: ignore[return-value]  – we return the Text widget for textarea
 
 
-def _image_to_data_uri(path: str, max_px: int = 900) -> str:
-    """Resize and encode image to base64 JPEG data URI."""
+def _image_to_data_uri(path: str, max_px: int = 1800) -> str:
+    """Encode image to base64 data URI. Preserves PNG; JPEG at high quality."""
     img = Image.open(path)
     img.thumbnail((max_px, max_px), Image.LANCZOS)
     buf = io.BytesIO()
-    img.convert("RGB").save(buf, format="JPEG", quality=85)
+    ext = Path(path).suffix.lower()
+    if ext == ".png":
+        img.save(buf, format="PNG", optimize=True)
+        mime = "image/png"
+    else:
+        img.convert("RGB").save(buf, format="JPEG", quality=92)
+        mime = "image/jpeg"
     b64 = base64.b64encode(buf.getvalue()).decode()
-    return f"data:image/jpeg;base64,{b64}"
+    return f"data:{mime};base64,{b64}"
 
 
 def _make_thumbnail(path: str, size: int = 80) -> ImageTk.PhotoImage:
@@ -253,7 +259,8 @@ class AssemblyManualDialog(ToplevelBase):
 
         self._yaml_text = yaml_text
         self._on_generate = on_generate_callback
-        self._block_data: list[ManualBlock] = default_blocks_from_yaml(yaml_text)
+        self._block_data: list = default_blocks_from_yaml(yaml_text)
+        self._block_widgets: list = []   # explicit widget tracking to avoid winfo_children issues
 
         self._build_ui()
 
@@ -327,14 +334,27 @@ class AssemblyManualDialog(ToplevelBase):
     # ── Block list management ──────────────────────────────────────────────
 
     def _collect_current(self):
-        """Sync self._block_data from current widgets before any rebuild."""
-        widgets = [w for w in self._block_frame.winfo_children()
-                   if isinstance(w, _BlockWidget)]
-        self._block_data = [w.collect() for w in widgets]
+        """Sync self._block_data from explicit widget list."""
+        try:
+            self._block_data = [w.collect() for w in self._block_widgets]
+        except Exception as exc:
+            showerror("Error interno", f"Error al leer datos de los bloques:\n{exc}")
+            raise
 
     def _rebuild_blocks(self):
+        # Destroy old widgets
+        for w in self._block_widgets:
+            try:
+                w.destroy()
+            except Exception:
+                pass
+        self._block_widgets.clear()
+        # Safety: clear any orphaned children
         for w in self._block_frame.winfo_children():
-            w.destroy()
+            try:
+                w.destroy()
+            except Exception:
+                pass
 
         total = len(self._block_data)
         for i, block in enumerate(self._block_data):
@@ -345,6 +365,7 @@ class AssemblyManualDialog(ToplevelBase):
                 on_delete=lambda i=i: self._delete_block(i),
             )
             bw.pack(fill=tk.X, padx=4, pady=4)
+            self._block_widgets.append(bw)
 
     def _move(self, idx: int, direction: int):
         self._collect_current()
@@ -362,15 +383,17 @@ class AssemblyManualDialog(ToplevelBase):
         self._rebuild_blocks()
 
     def _add_block(self, block_type: str):
-        self._collect_current()
-        self._block_data.append(ManualBlock(
-            block_type=block_type,
-            title=block_type,
-            fields=default_fields_for(block_type),
-        ))
-        self._rebuild_blocks()
-        # Scroll to bottom
-        self._canvas.after(100, lambda: self._canvas.yview_moveto(1.0))
+        try:
+            self._collect_current()
+            self._block_data.append(ManualBlock(
+                block_type=block_type,
+                title=block_type,
+                fields=default_fields_for(block_type),
+            ))
+            self._rebuild_blocks()
+            self._canvas.after(100, lambda: self._canvas.yview_moveto(1.0))
+        except Exception as exc:
+            showerror("Error", f"No se pudo añadir el bloque '{block_type}':\n{exc}")
 
     # ── Export actions ─────────────────────────────────────────────────────
 

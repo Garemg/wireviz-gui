@@ -83,7 +83,7 @@ body {
     min-height: 44px;
     background: #fff;
 }
-.header-logo img { height: 28px; }
+.header-logo img { height: 46px; max-height: 46px; }
 .header-logo-text {
     font-size: 20pt;
     font-weight: 900;
@@ -211,11 +211,13 @@ body {
     justify-content: center;
 }
 .images-grid img {
-    max-width: 45%;
-    max-height: 200px;
+    max-width: 80%;
+    max-height: 320px;
     border: 1px solid #ccc;
     border-radius: 4px;
     object-fit: contain;
+    display: block;
+    margin: 4px auto;
 }
 /* ── Footer ── */
 .footer {
