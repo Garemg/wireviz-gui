@@ -2,15 +2,16 @@
 
 import base64
 import io
+import json
 import logging
 import sys
 import zipfile
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from jinja2 import BaseLoader, Environment
 
-from wireviz_gui.assembly_spec import BLOCK_TYPES, AssemblyManualSpec
+from wireviz_gui.assembly_spec import BLOCK_TYPES, AssemblyManualSpec, spec_to_dict
 
 logger = logging.getLogger(__name__)
 
@@ -51,13 +52,15 @@ def _get_logo() -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 _STYLE = """
-@page { size: A4 portrait; margin: 10mm; }
+@page { size: A4 portrait; margin: 0; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
     font-family: Arial, Helvetica, sans-serif;
     font-size: 10.5pt;
     color: #0d1b2a;
     background: #e8e8e8;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
 }
 /* ── Page ── */
 .page {
@@ -211,6 +214,36 @@ body {
     justify-content: space-between;
     background: #fafafa;
 }
+/* ── Print / PDF ── */
+@media print {
+    html, body { background: white; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .page {
+        width: 210mm;
+        height: 297mm;
+        margin: 0;
+        border: none;
+        overflow: hidden;
+        break-after: page;
+        page-break-after: always;
+    }
+    .page:last-child { break-after: avoid; page-break-after: avoid; }
+    .content { flex: 1 1 0; min-height: 0; overflow: hidden; }
+    .images-grid {
+        flex: 1 1 0;
+        min-height: 0;
+        flex-wrap: nowrap;
+        overflow: hidden;
+    }
+    .images-grid img {
+        flex: 0 1 auto;
+        min-width: 0;
+        min-height: 0;
+        max-height: 100%;
+        max-width: 100%;
+        object-fit: contain;
+    }
+}
 """
 
 _PAGE_TEMPLATE = r"""
@@ -239,7 +272,7 @@ _PAGE_TEMPLATE = r"""
         {% if block.fields.programa_cortadora %}<tr><th>Programa cortadora</th><td>{{ block.fields.programa_cortadora }}</td></tr>{% endif %}
       </table>
       {% if block.fields.longitud_mm %}
-      <div class="box-blue">LONGITUD DEL CABLE: {{ block.fields.longitud_mm }} mm</div>
+      <div class="box-blue">LONGITUD DEL CABLE: {{ block.fields.longitud_mm }} m</div>
       {% endif %}
       {% if block.fields.notas %}
       <div class="box-yellow">{{ block.fields.notas }}</div>
@@ -274,8 +307,8 @@ _PAGE_TEMPLATE = r"""
       {% endif %}
       <div class="box-yellow">🔍 Revisión visual de cada terminal</div>
 
-    {# ── TRAZABILIDAD ── #}
-    {% elif block.block_type == "Trazabilidad" %}
+    {# ── TERMORRETRÁCTIL / TRAZABILIDAD ── #}
+    {% elif block.block_type == "Termorretráctil" or block.block_type == "Trazabilidad" %}
       <table class="info-table">
         {% if block.fields.extremo %}<tr><th>Extremo</th><td><b>{{ block.fields.extremo }}</b></td></tr>{% endif %}
         {% if block.fields.tamaño_label_mm %}<tr><th>Tamaño label</th><td>{{ block.fields.tamaño_label_mm }} mm</td></tr>{% endif %}
@@ -413,32 +446,51 @@ def _safe_filename(text: str, maxlen: int = 40) -> str:
     return s[:maxlen] or "paso"
 
 
-def export_manual_zip(spec: AssemblyManualSpec, output_path: str) -> str:
+def export_manual_zip(
+    spec: AssemblyManualSpec,
+    output_path: str,
+    progress_callback: Optional[Callable[[str], None]] = None,
+) -> str:
     """
     Export the assembly manual as a ZIP file containing:
-      - manual_completo.html          (all steps, self-contained)
-      - paso_XX_<title>.html          (one per step, self-contained)
-      - images/logo-torsa.jpg         (logo file for reference)
-    Optional (if weasyprint available):
-      - manual_completo.pdf
-      - paso_XX_<title>.pdf
+      - [referencia].wam              (project file, re-importable)
+      - html/manual_completo.html     (all steps, self-contained)
+      - html/paso_XX_<title>.html     (one per step, self-contained)
+      - pdf/manual_completo.pdf       (full manual PDF via Playwright)
+      - pdf/paso_XX_<title>.pdf       (one PDF per step via Playwright)
+      - images/logo-torsa.jpg         (logo)
+      - images/paso_XX_<name>.<ext>   (all block images extracted from spec)
     """
+    def _progress(msg: str) -> None:
+        if progress_callback:
+            progress_callback(msg)
+
     blocks = spec.numbered_blocks()
+    total = len(blocks)
 
     with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
 
+        # ── .wam project file ──────────────────────────────────────────────
+        wam_filename = _safe_filename(spec.referencia or "manual") + ".wam"
+        zf.writestr(
+            wam_filename,
+            json.dumps(spec_to_dict(spec), ensure_ascii=False, indent=2).encode("utf-8"),
+        )
+
         # ── Combined HTML ──────────────────────────────────────────────────
+        _progress("Renderizando HTML completo…")
         full_html = render_full_html(spec)
-        zf.writestr("manual_completo.html", full_html.encode("utf-8"))
+        zf.writestr("html/manual_completo.html", full_html.encode("utf-8"))
 
         # ── Individual step HTMLs ──────────────────────────────────────────
         for block in blocks:
             n = block["step_number"]
+            _progress(f"HTML paso {n}/{total}: {block['title'][:30]}…")
             fname = f"paso_{n:02d}_{_safe_filename(block['title'])}.html"
             html = render_step_html(spec, block)
-            zf.writestr(fname, html.encode("utf-8"))
+            zf.writestr(f"html/{fname}", html.encode("utf-8"))
 
-        # ── Logo image (original file, for external reference) ─────────────
+        # ── Logo image ─────────────────────────────────────────────────────
         candidates = [
             Path(__file__).parent.parent / "images" / "logo-torsa.jpg",
         ]
@@ -449,35 +501,86 @@ def export_manual_zip(spec: AssemblyManualSpec, output_path: str) -> str:
                 zf.write(p, "images/logo-torsa.jpg")
                 break
 
-        # ── Optional PDF export ────────────────────────────────────────────
-        pdf_ok = _try_pdf_export(spec, blocks, zf)
+        # ── Block images extracted from spec ───────────────────────────────
+        for block in blocks:
+            n = block["step_number"]
+            for img in block.get("images", []):
+                name = img.get("name", f"imagen_{n}")
+                data_uri = img.get("data_uri", "")
+                if not data_uri or "," not in data_uri:
+                    continue
+                header, b64 = data_uri.split(",", 1)
+                ext = "jpg"
+                if "image/png" in header:
+                    ext = "png"
+                elif "image/gif" in header:
+                    ext = "gif"
+                elif "image/webp" in header:
+                    ext = "webp"
+                # Avoid double extension if name already has one
+                name_stem = name
+                for known_ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"):
+                    if name.lower().endswith(known_ext):
+                        name_stem = name[: -len(known_ext)]
+                        break
+                try:
+                    img_bytes = base64.b64decode(b64)
+                    img_fname = f"images/paso_{n:02d}_{_safe_filename(name_stem)}.{ext}"
+                    zf.writestr(img_fname, img_bytes)
+                except Exception as exc:
+                    logger.warning("Could not extract image %s: %s", name, exc)
+
+        # ── PDF export ─────────────────────────────────────────────────────
+        pdf_ok = _try_pdf_export(spec, blocks, zf, _progress)
         if not pdf_ok:
-            logger.info("WeasyPrint not available — PDFs skipped. Open HTML in browser to print PDF.")
+            logger.warning("Playwright not available or PDF export failed — PDFs not included.")
 
     return output_path
 
 
-def _try_pdf_export(spec: AssemblyManualSpec, blocks: list, zf: zipfile.ZipFile) -> bool:
-    """Try to add PDFs to the zip. Returns True if successful."""
+def _try_pdf_export(
+    spec: AssemblyManualSpec,
+    blocks: list,
+    zf: zipfile.ZipFile,
+    progress: Callable[[str], None],
+) -> bool:
+    """Add PDFs to the zip using Playwright (headless Chromium). Returns True if successful."""
     try:
-        from weasyprint import HTML as WP_HTML  # type: ignore[import]
+        from playwright.sync_api import sync_playwright  # type: ignore[import]
     except ImportError:
+        logger.warning("Playwright not installed. Run: pip install playwright && playwright install chromium")
         return False
 
     try:
-        # Combined PDF
-        full_html = render_full_html(spec)
-        pdf_bytes = WP_HTML(string=full_html).write_pdf()
-        zf.writestr("manual_completo.pdf", pdf_bytes)
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch()
+            page = browser.new_page()
 
-        # Individual PDFs
-        for block in blocks:
-            n = block["step_number"]
-            fname = f"paso_{n:02d}_{_safe_filename(block['title'])}.pdf"
-            html = render_step_html(spec, block)
-            pdf_bytes = WP_HTML(string=html).write_pdf()
-            zf.writestr(fname, pdf_bytes)
+            progress("Generando PDF completo…")
+            full_html = render_full_html(spec)
+            page.set_content(full_html, wait_until="networkidle")
+            pdf_bytes = page.pdf(
+                format="A4",
+                print_background=True,
+                margin={"top": "0", "right": "0", "bottom": "0", "left": "0"},
+            )
+            zf.writestr("pdf/manual_completo.pdf", pdf_bytes)
 
+            total = len(blocks)
+            for block in blocks:
+                n = block["step_number"]
+                progress(f"PDF paso {n}/{total}: {block['title'][:30]}…")
+                fname = f"paso_{n:02d}_{_safe_filename(block['title'])}.pdf"
+                html = render_step_html(spec, block)
+                page.set_content(html, wait_until="networkidle")
+                pdf_bytes = page.pdf(
+                    format="A4",
+                    print_background=True,
+                    margin={"top": "0", "right": "0", "bottom": "0", "left": "0"},
+                )
+                zf.writestr(f"pdf/{fname}", pdf_bytes)
+
+            browser.close()
         return True
     except Exception as exc:
         logger.warning("PDF export failed: %s", exc)

@@ -1,13 +1,16 @@
 """Block-based dialog for assembly manual creation with reorderable steps."""
 
 import base64
+import hashlib
 import io
+import json
 import logging
+import threading
 import tkinter as tk
 import tkinter.ttk as ttk
 from pathlib import Path
 from tkinter.filedialog import askopenfilenames
-from tkinter.messagebox import showerror
+from tkinter.messagebox import askyesnocancel, showerror
 from typing import Callable, Optional
 
 from PIL import Image, ImageTk
@@ -114,7 +117,8 @@ class _BlockWidget(tk.LabelFrame):
         "Corte":            "#fff3cd",
         "Procesado":        "#d4edda",
         "Crimpado":         "#cce5ff",
-        "Trazabilidad":     "#e2d9f3",
+        "Termorretráctil":  "#e2d9f3",
+        "Trazabilidad":     "#e2d9f3",   # legacy compat
         "Montaje conector": "#fde2e2",
         "Test":             "#d1ecf1",
         "Embalaje":         "#f8d7da",
@@ -123,6 +127,7 @@ class _BlockWidget(tk.LabelFrame):
 
     def __init__(self, parent, block: ManualBlock, index: int, total: int,
                  on_up: Callable, on_down: Callable, on_delete: Callable,
+                 on_duplicate: Optional[Callable] = None,
                  on_drag_start: Optional[Callable] = None,
                  on_drag_motion: Optional[Callable] = None,
                  on_drag_end: Optional[Callable] = None, **kwargs):
@@ -161,10 +166,13 @@ class _BlockWidget(tk.LabelFrame):
                  bg="#1e3050", fg="white", insertbackground="white",
                  relief="flat", width=32).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
 
-        # Move / delete buttons
+        # Move / duplicate / delete buttons
         btn_cfg = dict(bg=_NAVY, fg="white", relief="flat", font=("Arial", 10), padx=3)
         tk.Button(bar, text="▲", command=on_up,     **btn_cfg).pack(side=tk.RIGHT, pady=2)
         tk.Button(bar, text="▼", command=on_down,   **btn_cfg).pack(side=tk.RIGHT, pady=2)
+        if on_duplicate:
+            tk.Button(bar, text="⊕", command=on_duplicate,
+                      **{**btn_cfg, "fg": "#90ee90"}).pack(side=tk.RIGHT, pady=2, padx=(0, 2))
         tk.Button(bar, text="✕", command=on_delete,
                   **{**btn_cfg, "fg": "#ff9999"}).pack(side=tk.RIGHT, pady=2, padx=(0, 4))
 
@@ -292,7 +300,9 @@ class AssemblyManualDialog(ToplevelBase):
         self._block_widgets: list = []   # explicit widget tracking to avoid winfo_children issues
         self._drag_idx: Optional[int] = None
         self._drop_line: Optional[tk.Frame] = None
+        self._last_saved_hash: Optional[str] = None   # None until first save
 
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._build_ui()
 
     # ── UI construction ────────────────────────────────────────────────────
@@ -368,7 +378,55 @@ class AssemblyManualDialog(ToplevelBase):
 
         self._rebuild_blocks()
 
-    # ── Block list management ──────────────────────────────────────────────
+    # ── Unsaved-changes tracking ────────────────────────────────────────────
+
+    def _compute_spec_hash(self) -> str:
+        """Lightweight hash of the spec (without image data) for change detection."""
+        try:
+            spec = self._build_spec()
+            data = {
+                "referencia": spec.referencia,
+                "revision": spec.revision,
+                "fecha": spec.fecha,
+                "autor": spec.autor,
+                "blocks": [
+                    {
+                        "block_type": b.block_type,
+                        "title": b.title,
+                        "fields": b.fields,
+                        "n_images": len(b.images),
+                        "image_names": [img.get("name", "") for img in b.images],
+                    }
+                    for b in spec.blocks
+                ],
+            }
+            return hashlib.md5(
+                json.dumps(data, sort_keys=True, ensure_ascii=False).encode("utf-8")
+            ).hexdigest()
+        except Exception:
+            return ""
+
+    def _on_close(self):
+        """Prompt to save if there are unsaved changes before closing."""
+        current_hash = self._compute_spec_hash()
+        if current_hash and current_hash != self._last_saved_hash:
+            answer = askyesnocancel(
+                "Cambios sin guardar",
+                "El manual tiene cambios sin guardar.\n"
+                "¿Deseas guardar el proyecto (.wam) antes de cerrar?\n\n"
+                "  Sí  → Guardar y cerrar\n"
+                "  No  → Cerrar sin guardar\n"
+                "Cancelar → Volver al editor",
+            )
+            if answer is None:    # Cancel → stay
+                return
+            if answer:            # Yes → save, then close only if save succeeded
+                self._save_spec()
+                if self._compute_spec_hash() != self._last_saved_hash:
+                    return        # user cancelled the save-as dialog
+        self.destroy()
+
+    # ── Block list management ──────────────────────────────────────────────────
 
     def _collect_current(self):
         """Sync self._block_data from explicit widget list."""
@@ -401,6 +459,7 @@ class AssemblyManualDialog(ToplevelBase):
                 on_up=lambda i=i: self._move(i, -1),
                 on_down=lambda i=i: self._move(i, +1),
                 on_delete=lambda i=i: self._delete_block(i),
+                on_duplicate=lambda i=i: self._duplicate_block(i),
                 on_drag_start=self._drag_start,
                 on_drag_motion=self._drag_motion,
                 on_drag_end=self._drag_end,
@@ -421,6 +480,20 @@ class AssemblyManualDialog(ToplevelBase):
         self._collect_current()
         if 0 <= idx < len(self._block_data):
             self._block_data.pop(idx)
+        self._rebuild_blocks()
+
+    def _duplicate_block(self, idx: int):
+        """Clone block at idx (fields + images) and insert it immediately after."""
+        self._collect_current()
+        if 0 <= idx < len(self._block_data):
+            original = self._block_data[idx]
+            duplicate = ManualBlock(
+                block_type=original.block_type,
+                title=original.title + " (copia)",
+                fields=dict(original.fields),
+                images=[dict(img) for img in original.images],
+            )
+            self._block_data.insert(idx + 1, duplicate)
         self._rebuild_blocks()
 
     def _add_block(self, block_type: str):
@@ -453,6 +526,7 @@ class AssemblyManualDialog(ToplevelBase):
             return
         try:
             save_spec(spec, path)
+            self._last_saved_hash = self._compute_spec_hash()
             showinfo("Guardado", f"Proyecto guardado en:\n{path}")
         except Exception as exc:
             showerror("Error al guardar", str(exc))
@@ -488,6 +562,8 @@ class AssemblyManualDialog(ToplevelBase):
         self.update_idletasks()
         self._on_frame_configure()
         self._canvas.yview_moveto(0)
+        self._last_saved_hash = self._compute_spec_hash()
+        self._last_saved_hash = self._compute_spec_hash()
 
     # ── Export actions ─────────────────────────────────────────────────────
 
@@ -531,12 +607,31 @@ class AssemblyManualDialog(ToplevelBase):
         if not path:
             return
 
-        try:
-            result = export_manual_zip(spec, path)
-            showinfo("Exportado", f"Manual exportado en:\n{result}")
-            self.destroy()
-        except Exception as exc:
-            showerror("Error", f"Error al exportar:\n{exc}")
+        prog = _ProgressOverlay(self)
+        result_holder: dict = {}
+
+        def _run() -> None:
+            def _cb(msg: str) -> None:
+                self.after(0, lambda m=msg: prog.set_status(m))
+            try:
+                result_holder["ok"] = export_manual_zip(spec, path, progress_callback=_cb)
+            except Exception as exc:
+                result_holder["error"] = exc
+
+        def _poll() -> None:
+            if t.is_alive():
+                self.after(150, _poll)
+                return
+            prog.destroy()
+            if "error" in result_holder:
+                showerror("Error", f"Error al exportar:\n{result_holder['error']}")
+            else:
+                showinfo("Exportado", f"Manual exportado en:\n{result_holder['ok']}")
+                self.destroy()
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        self.after(150, _poll)
 
     # ── Drag-to-reorder ──────────────────────────────────────────────────────
 
@@ -546,8 +641,8 @@ class AssemblyManualDialog(ToplevelBase):
     def _drag_motion(self, idx: int, event):
         if self._drag_idx is None:
             return
-        target = self._get_drop_target(event.y_root)
-        self._show_drop_line(target)
+        ins = self._get_insertion_index(event.y_root)
+        self._show_drop_line(ins)
         # Auto-scroll when dragging near canvas edges
         cy_top = self._canvas.winfo_rooty()
         cy_bot = cy_top + self._canvas.winfo_height()
@@ -562,34 +657,39 @@ class AssemblyManualDialog(ToplevelBase):
         src = self._drag_idx
         self._drag_idx = None
         self._hide_drop_line()
-        target = self._get_drop_target(event.y_root)
-        if target == src:
+        ins = self._get_insertion_index(event.y_root)
+        # No move if dropping on the same or immediately adjacent slot
+        if ins == src or ins == src + 1:
             return
         self._collect_current()
         block = self._block_data.pop(src)
-        insert_at = target if target <= src else target - 1
-        self._block_data.insert(max(0, insert_at), block)
+        # Adjust insertion index after the removal
+        if src < ins:
+            ins -= 1
+        self._block_data.insert(ins, block)
         self._rebuild_blocks()
 
-    def _get_drop_target(self, y_root: int) -> int:
+    def _get_insertion_index(self, y_root: int) -> int:
+        """Return insertion index (0..len) from screen Y coordinate.
+
+        Uses winfo_rooty() of _block_frame so the result is correct
+        regardless of canvas scroll position.
+        """
         if not self._block_widgets:
             return 0
-        frame_top = self._block_frame.winfo_rooty()
-        scroll_frac = self._canvas.yview()[0]
-        frame_h = max(self._block_frame.winfo_height(), 1)
-        y_local = y_root - frame_top + scroll_frac * frame_h
+        y_local = y_root - self._block_frame.winfo_rooty()
         for i, w in enumerate(self._block_widgets):
             if y_local < w.winfo_y() + w.winfo_height() * 0.5:
                 return i
-        return len(self._block_widgets) - 1
+        return len(self._block_widgets)  # after last item
 
-    def _show_drop_line(self, target: int):
+    def _show_drop_line(self, insert_idx: int):
         if self._drop_line is None:
             self._drop_line = tk.Frame(self._block_frame, height=3, bg="#e30613")
         if not self._block_widgets:
             return
-        if target < len(self._block_widgets):
-            w = self._block_widgets[target]
+        if insert_idx < len(self._block_widgets):
+            w = self._block_widgets[insert_idx]
             y = w.winfo_y() - 3
         else:
             w = self._block_widgets[-1]
@@ -619,7 +719,45 @@ class AssemblyManualDialog(ToplevelBase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+class _ProgressOverlay(tk.Toplevel):
+    """Non-closeable modal progress window shown during ZIP/PDF export."""
 
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.transient(parent)
+        self.grab_set()
+        self.resizable(False, False)
+        self.title("Exportando…")
+        self.protocol("WM_DELETE_WINDOW", lambda: None)   # prevent close
+
+        tk.Label(
+            self, text="Generando archivos, por favor espera…",
+            font=("Arial", 11), pady=10, padx=24,
+        ).pack()
+
+        self._status_var = tk.StringVar(value="Iniciando…")
+        tk.Label(
+            self, textvariable=self._status_var,
+            font=("Arial", 9), fg="#555", padx=24, pady=2,
+        ).pack()
+
+        pb = ttk.Progressbar(self, mode="indeterminate", length=320)
+        pb.pack(pady=10, padx=24)
+        pb.start(12)
+
+        self.wm_attributes("-topmost", True)
+        self.update_idletasks()
+        # Centre over parent
+        x = parent.winfo_rootx() + parent.winfo_width() // 2 - 200
+        y = parent.winfo_rooty() + parent.winfo_height() // 2 - 70
+        self.geometry(f"+{x}+{y}")
+
+    def set_status(self, msg: str) -> None:
+        self._status_var.set(msg)
+        self.update_idletasks()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 def _today() -> str:
     from datetime import date
     return date.today().isoformat()

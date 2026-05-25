@@ -11,6 +11,7 @@ dependencies = [
     "jinja2>=3.1",
     "mypy>=1.19.1",
     "pillow>=12.1.0",
+    "playwright>=1.40",
     "tk-tools>=0.17.0",
     "wireviz>=0.4.1",
 ]

@@ -6,7 +6,7 @@ from io import BytesIO
 from pathlib import Path
 from tkinter import ttk
 from tkinter.filedialog import askopenfilename, asksaveasfilename
-from tkinter.messagebox import showerror, showinfo
+from tkinter.messagebox import askyesnocancel, showerror, showinfo
 from typing import Callable, Optional
 
 import yaml
@@ -701,12 +701,41 @@ class InputOutputFrame(BaseFrame):
 
         self._harness_view_frame.save_image(file_name)
 
+    def _has_unsaved_changes(self) -> bool:
+        """Return True if the editor has changes not yet saved to disk."""
+        current = self._text_entry_frame.get()
+        if not current.strip():
+            return False
+        if self._current_file_path is None:
+            return True
+        try:
+            saved = Path(self._current_file_path).read_text(encoding="utf-8")
+            return current != saved
+        except Exception:
+            return True
+
     def generate_assembly_manual(self):
-        """Open the assembly manual dialog."""
+        """Open the assembly manual dialog, prompting to save unsaved changes first."""
         yaml_text = self._text_entry_frame.get()
         if not yaml_text.strip():
             showinfo("Manual", "No hay YAML para generar el manual.")
             return
+        if self._has_unsaved_changes():
+            answer = askyesnocancel(
+                "Proyecto sin guardar",
+                "El proyecto tiene cambios sin guardar.\n"
+                "¿Deseas guardar antes de generar el manual?\n\n"
+                "  Sí  → Guardar y continuar\n"
+                "  No  → Continuar sin guardar\n"
+                "Cancelar → Volver",
+            )
+            if answer is None:   # Cancel
+                return
+            if answer:           # Yes – save first
+                self.save_file()
+                # Re-read in case save_as changed the file path or was cancelled
+                if self._has_unsaved_changes():
+                    return   # User cancelled the save dialog
         AssemblyManualDialog(self, yaml_text=yaml_text)
 
     def export_all(self):
@@ -1114,6 +1143,10 @@ class TextEntryFrame(BaseFrame):
         # Redo: Ctrl+Y and Ctrl+Shift+Z (Ctrl+Z undo is native with undo=True)
         self._text.bind("<Control-y>", lambda e: self._redo())
         self._text.bind("<Control-Shift-Z>", lambda e: self._redo())
+        # YAML smart indentation
+        self._text.bind("<Tab>", self._on_tab)
+        self._text.bind("<Shift-Tab>", self._on_shift_tab)
+        self._text.bind("<Return>", self._on_return)
         self._text.tag_config("highlight", background="#FFEB3B")
 
         self.grid_rowconfigure(0, weight=1)
@@ -1168,6 +1201,55 @@ class TextEntryFrame(BaseFrame):
             self._text.edit_redo()
         except tk.TclError:
             pass
+
+    # ── YAML smart indentation ────────────────────────────────────────────
+
+    def _on_tab(self, event) -> str:
+        """Tab: insert 2 spaces, or indent each line of a multi-line selection."""
+        try:
+            sel_start = self._text.index("sel.first")
+            sel_end   = self._text.index("sel.last")
+            start_ln  = int(sel_start.split(".")[0])
+            end_ln    = int(sel_end.split(".")[0])
+            # Don't indent a line whose only selected part is its line-start (col 0)
+            if self._text.compare(f"{end_ln}.0", "==", sel_end):
+                end_ln -= 1
+            for ln in range(start_ln, end_ln + 1):
+                self._text.insert(f"{ln}.0", "  ")
+        except tk.TclError:
+            # No selection: just insert 2 spaces at cursor
+            self._text.insert("insert", "  ")
+        return "break"
+
+    def _on_shift_tab(self, event) -> str:
+        """Shift+Tab: remove up to 2 leading spaces from selected (or current) lines."""
+        try:
+            sel_start = self._text.index("sel.first")
+            sel_end   = self._text.index("sel.last")
+            start_ln  = int(sel_start.split(".")[0])
+            end_ln    = int(sel_end.split(".")[0])
+            if self._text.compare(f"{end_ln}.0", "==", sel_end):
+                end_ln -= 1
+        except tk.TclError:
+            start_ln = end_ln = int(self._text.index("insert").split(".")[0])
+        for ln in range(start_ln, end_ln + 1):
+            line = self._text.get(f"{ln}.0", f"{ln}.end")
+            if line.startswith("  "):
+                self._text.delete(f"{ln}.0", f"{ln}.2")
+            elif line.startswith(" "):
+                self._text.delete(f"{ln}.0", f"{ln}.1")
+        return "break"
+
+    def _on_return(self, event) -> str:
+        """Return: auto-indent matching current line; +2 spaces if line ends with ':'."""
+        pos  = self._text.index("insert")
+        ln   = int(pos.split(".")[0])
+        line = self._text.get(f"{ln}.0", f"{ln}.end")
+        n    = len(line) - len(line.lstrip(" "))
+        extra = 2 if line.rstrip().endswith(":") else 0
+        self._text.insert("insert", "\n" + " " * (n + extra))
+        self._text.see("insert")
+        return "break"
 
     def associate_callback(self, on_update_callback: Callable):
         self._on_update_callback = on_update_callback

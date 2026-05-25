@@ -11,7 +11,7 @@ from typing import Any
 BLOCK_TYPES: dict = OrderedDict([
     ("Corte", [
         ("pn_cable",           "PN Cable",               "entry"),
-        ("longitud_mm",        "Longitud total (mm)",     "entry"),
+        ("longitud_mm",        "Longitud total (m)",      "entry"),
         ("programa_cortadora", "Programa cortadora",      "entry"),
         ("notas",              "Notas de corte",          "entry"),
     ]),
@@ -32,7 +32,7 @@ BLOCK_TYPES: dict = OrderedDict([
         ("crimp_sobre_funda",      "Crimp sobre funda",           "check"),
         ("crimp_sobre_conductores","Crimp sobre conductores",     "check"),
     ]),
-    ("Trazabilidad", [
+    ("Termorretráctil", [
         ("extremo",          "Extremo (A / B / ...)",  "entry"),
         ("texto_label",      "Texto del label",        "entry"),
         ("tamaño_label_mm",  "Tamaño label (mm)",      "entry"),
@@ -136,14 +136,14 @@ def default_blocks_from_yaml(yaml_text: str) -> list:
             fields={**default_fields_for("Procesado"), "extremo": end},
         ))
         blocks.append(ManualBlock(
+            block_type="Termorretráctil",
+            title=f"Termorretráctil {end}",
+            fields={**default_fields_for("Termorretráctil"), "extremo": end},
+        ))
+        blocks.append(ManualBlock(
             block_type="Crimpado",
             title=f"Crimpado terminales {end}",
             fields={**default_fields_for("Crimpado"), "extremo": end},
-        ))
-        blocks.append(ManualBlock(
-            block_type="Trazabilidad",
-            title=f"Trazabilidad {end}",
-            fields={**default_fields_for("Trazabilidad"), "extremo": end},
         ))
         blocks.append(ManualBlock(
             block_type="Montaje conector",
@@ -178,16 +178,21 @@ def spec_to_dict(spec: "AssemblyManualSpec") -> dict:
     }
 
 
+_BLOCK_TYPE_MIGRATIONS = {
+    "Trazabilidad": "Termorretráctil",
+}
+
+
 def spec_from_dict(data: dict) -> "AssemblyManualSpec":
-    blocks = [
-        ManualBlock(
-            block_type=b["block_type"],
-            title=b.get("title", b["block_type"]),
+    blocks = []
+    for b in data.get("blocks", []):
+        btype = _BLOCK_TYPE_MIGRATIONS.get(b["block_type"], b["block_type"])
+        blocks.append(ManualBlock(
+            block_type=btype,
+            title=b.get("title", btype),
             fields=b.get("fields", {}),
             images=b.get("images", []),
-        )
-        for b in data.get("blocks", [])
-    ]
+        ))
     return AssemblyManualSpec(
         referencia=data.get("referencia", ""),
         revision=data.get("revision", "A"),
