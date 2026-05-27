@@ -219,9 +219,11 @@ class Application(tk.Tk):
         self._logger.setLevel(loglevel)
 
         super().__init__(**kwargs)
-
+        self._apply_theme()
         self.title(f"wireviz-gui {__version__}")
         self._recent_files_mgr = _RecentFiles()
+        self._geo_save_id = None
+        self._restore_geometry()
 
         self._icon = tk.PhotoImage(data=slightlynybbled_logo_small)
         self.tk.call("wm", "iconphoto", self._w, self._icon)
@@ -303,18 +305,25 @@ class Application(tk.Tk):
             else None,
         )
         self.bind_all(
+            "<Control-S>",
+            lambda _: self.get_active_frame().save_as_file()
+            if self.get_active_frame()
+            else None,
+        )
+        self.bind_all(
             "<Control-r>",
             lambda _: self.get_active_frame().reload_file()
             if self.get_active_frame()
             else None,
         )
         self.bind_all("<Control-w>", lambda _: self.close_current_tab())
+        self.bind("<Configure>", self._on_resize)
 
         self.mainloop()
 
     def _about(self):
         top = ToplevelBase(self)
-        top.title("About")
+        top.title("Acerca de")
         AboutFrame(top).grid()
 
     def _open_syntax_reference(self):
@@ -333,12 +342,40 @@ class Application(tk.Tk):
         """Open a file from the recent files list in a new tab."""
         path = Path(filepath)
         if not path.exists():
-            showerror("File Not Found", f"The file no longer exists:\n{filepath}")
+            showerror("Archivo no encontrado", f"El archivo ya no existe:\n{filepath}")
             return
         frame = self.add_tab(title=path.name, filepath=filepath)
         if frame:
             frame._text_entry_frame.load(path.read_text(encoding="utf-8"))
             frame.parse_text()
+
+    # ── Window geometry ───────────────────────────────────────────────────────
+
+    _GEO_FILE = Path.home() / ".wireviz-gui" / "window_geometry.txt"
+
+    def _restore_geometry(self):
+        try:
+            if self._GEO_FILE.exists():
+                geo = self._GEO_FILE.read_text().strip()
+                if geo:
+                    self.geometry(geo)
+        except Exception:
+            pass
+
+    def _on_resize(self, event):
+        if event.widget is not self:
+            return
+        if self._geo_save_id:
+            self.after_cancel(self._geo_save_id)
+        self._geo_save_id = self.after(500, self._save_geometry)
+
+    def _save_geometry(self):
+        self._geo_save_id = None
+        try:
+            self._GEO_FILE.parent.mkdir(parents=True, exist_ok=True)
+            self._GEO_FILE.write_text(self.geometry())
+        except Exception:
+            pass
 
     def get_active_frame(self):
         try:
@@ -349,7 +386,7 @@ class Application(tk.Tk):
         except tk.TclError:
             return None
 
-    def add_tab(self, title="Untitled", content=None, filepath=None):
+    def add_tab(self, title="Sin título", content=None, filepath=None):
         def on_title_change(new_title):
             try:
                 self._notebook.tab(frame, text=new_title)
@@ -392,6 +429,57 @@ class Application(tk.Tk):
             pass
         if not self._notebook.tabs():
             self.add_tab()
+
+    # ── Theme ────────────────────────────────────────────────────────────────
+
+    def _apply_theme(self) -> None:
+        """Aplica un tema moderno y plano vía ttk.Style (una sola vez al iniciar)."""
+        style = ttk.Style(self)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+
+        BG    = "#f5f6f7"
+        NAVY  = "#0d1b2a"
+        NAVY2 = "#1e3050"
+        BLUE  = "#2d5a9b"
+        FG    = "#1a1a1a"
+        SEP   = "#d0d4d8"
+
+        self.configure(bg=NAVY)
+
+        style.configure("TFrame",        background=BG)
+        style.configure("TLabel",        background=BG, foreground=FG, font=("Segoe UI", 9))
+        style.configure("TPanedwindow",  background=SEP, sashwidth=5, sashrelief="flat")
+        style.configure("TSeparator",    background=SEP)
+
+        style.configure("TNotebook",     background=NAVY, tabmargins=[2, 4, 0, 0], borderwidth=0)
+        style.configure("TNotebook.Tab", background=NAVY2, foreground="#8a9bb0",
+                         padding=[12, 6], font=("Segoe UI", 9, "bold"))
+        style.map("TNotebook.Tab",
+                  background=[("selected", BLUE),   ("active", "#2a4570")],
+                  foreground=[("selected", "white"), ("active", "white")])
+
+        style.configure("Vertical.TScrollbar",
+                         troughcolor=BG, background="#c4cdd6",
+                         arrowcolor=NAVY2, borderwidth=0, width=10, arrowsize=10)
+        style.configure("Horizontal.TScrollbar",
+                         troughcolor=BG, background="#c4cdd6",
+                         arrowcolor=NAVY2, borderwidth=0, width=10, arrowsize=10)
+        style.map("Vertical.TScrollbar",
+                  background=[("active", "#9aaab8"), ("pressed", "#7a8a98")])
+        style.map("Horizontal.TScrollbar",
+                  background=[("active", "#9aaab8"), ("pressed", "#7a8a98")])
+
+        style.configure("TEntry",       fieldbackground="white", borderwidth=1, relief="flat")
+        style.configure("TCombobox",    fieldbackground="white", selectbackground=BLUE, padding=4)
+        style.configure("TButton",      background=BG, foreground=FG,
+                         borderwidth=1, relief="flat", padding=[8, 4], font=("Segoe UI", 9))
+        style.map("TButton",
+                  background=[("active", "#e4e8ec"), ("pressed", "#c8d0d8")])
+        style.configure("TCheckbutton", background=BG, foreground=FG, font=("Segoe UI", 9))
+        style.configure("TRadiobutton", background=BG, foreground=FG, font=("Segoe UI", 9))
 
 
 class TitleFrame(BaseFrame):
@@ -456,6 +544,12 @@ class InputOutputFrame(BaseFrame):
         self._paned_window.add(self._text_entry_frame, weight=1)
         self._paned_window.add(self._harness_view_frame, weight=3)
 
+        # Wire immediate-change and cursor callbacks
+        self._text_entry_frame.set_change_callback(self._update_tab_title)
+        self._text_entry_frame.set_cursor_callback(
+            lambda line, col: self._status_bar.set_cursor_pos(line, col)
+        )
+
         r += 1
         self._status_bar = _StatusBar(self)
         self._status_bar.grid(row=r, column=0, sticky="ew")
@@ -500,12 +594,12 @@ class InputOutputFrame(BaseFrame):
             self.parse_text(silent=True)
 
         except yaml.YAMLError as e:
-            showerror("YAML Error", f"Error processing existing YAML: {e}")
+            showerror("Error de YAML", f"Error procesando el YAML existente: {e}")
             return
 
     def add_connector(self):
         top = ToplevelBase(self)
-        top.title("Add Connector")
+        top.title("Añadir conector")
 
         def on_save(connector_data):
             top.destroy()
@@ -515,7 +609,7 @@ class InputOutputFrame(BaseFrame):
 
     def add_cable(self):
         top = ToplevelBase(self)
-        top.title("Add Cable")
+        top.title("Añadir cable")
 
         def on_save(cable_data):
             top.destroy()
@@ -525,7 +619,7 @@ class InputOutputFrame(BaseFrame):
 
     def add_connection(self):
         top = ToplevelBase(self)
-        top.title("Add Connection")
+        top.title("Añadir conexión")
 
         def on_save(connection_data):
             top.destroy()
@@ -542,7 +636,7 @@ class InputOutputFrame(BaseFrame):
 
     def add_mate(self):
         top = ToplevelBase(self)
-        top.title("Mate Connectors")
+        top.title("Conectar pines")
 
         def on_save(mate_data):
             top.destroy()
@@ -564,14 +658,13 @@ class InputOutputFrame(BaseFrame):
                 content = f.read()
             self._text_entry_frame.load(content)
             self._current_file_path = file_name
-            if self._on_title_change:
-                self._on_title_change(Path(file_name).name)
+            self._update_tab_title()
             self._status_bar.set_file(file_name)
             self.parse_text()
             if self._on_file_opened:
                 self._on_file_opened(file_name)
         except Exception as e:
-            showerror("Open Error", f"Could not open file:\n{e}")
+            showerror("Error al abrir", f"No se pudo abrir el archivo:\n{e}")
 
     def reload_file(self):
         if self._current_file_path:
@@ -581,9 +674,9 @@ class InputOutputFrame(BaseFrame):
                 self._text_entry_frame.load(content)
                 self.parse_text()
             except Exception as e:
-                showerror("Reload Error", f"Could not reload file:\n{e}")
+                showerror("Error al recargar", f"No se pudo recargar el archivo:\n{e}")
         else:
-            showinfo("Reload Info", "No file to reload.")
+            showinfo("Información", "No hay archivo que recargar.")
 
     def _image_paths(self):
         """Return image search paths: open file dir + user-configured dirs."""
@@ -632,17 +725,18 @@ class InputOutputFrame(BaseFrame):
                 data = normalize_connections(data)
                 parse(inp=data, return_types=("harness",), image_paths=self._image_paths())
             except YAMLError as e:
-                showerror("Save Error", f"Invalid YAML content:\n{e}")
+                showerror("Error al guardar", f"YAML inválido:\n{e}")
                 return
             except Exception as e:
-                showerror("Save Error", f"Invalid Wireviz YAML:\n{e}")
+                showerror("Error al guardar", f"YAML de WireViz inválido:\n{e}")
                 return
 
             try:
                 with open(self._current_file_path, "w", encoding="utf-8") as f:
                     f.write(yaml_input)
+                self._update_tab_title()
             except Exception as e:
-                showerror("Save Error", f"Could not save file:\n{e}")
+                showerror("Error al guardar", f"No se pudo guardar el archivo:\n{e}")
         else:
             self.save_as_file()
 
@@ -657,10 +751,10 @@ class InputOutputFrame(BaseFrame):
             data = normalize_connections(data)
             parse(inp=data, return_types=("harness",), image_paths=self._image_paths())
         except YAMLError as e:
-            showerror("Save Error", f"Invalid YAML content:\n{e}")
+            showerror("Error al guardar", f"YAML inválido:\n{e}")
             return
         except Exception as e:
-            showerror("Save Error", f"Invalid Wireviz YAML:\n{e}")
+            showerror("Error al guardar", f"YAML de WireViz inválido:\n{e}")
             return
 
         file_name = asksaveasfilename(
@@ -674,13 +768,12 @@ class InputOutputFrame(BaseFrame):
             with open(file_name, "w", encoding="utf-8") as f:
                 f.write(yaml_input)
             self._current_file_path = file_name
-            if self._on_title_change:
-                self._on_title_change(Path(file_name).name)
+            self._update_tab_title()
             self._status_bar.set_file(file_name)
             if self._on_file_opened:
                 self._on_file_opened(file_name)
         except Exception as e:
-            showerror("Save Error", f"Could not save file:\n{e}")
+            showerror("Error al guardar", f"No se pudo guardar el archivo:\n{e}")
 
     def save_yaml(self):
         """Deprecated: use save_file or save_as_file"""
@@ -688,11 +781,11 @@ class InputOutputFrame(BaseFrame):
 
     def save_graph_image(self):
         if not self._harness_view_frame.has_image():
-            showinfo("Save Image", "No image to save.")
+            showinfo("Guardar imagen", "No hay imagen que guardar.")
             return
 
         file_name = asksaveasfilename(
-            title="Export Graph Image",
+            title="Exportar imagen del diagrama",
             defaultextension=".png",
             filetypes=[("PNG files", "*.png"), ("All files", "*.*")],
         )
@@ -700,6 +793,14 @@ class InputOutputFrame(BaseFrame):
             return
 
         self._harness_view_frame.save_image(file_name)
+
+    def _update_tab_title(self):
+        """Update the notebook tab title: add \u25cf prefix when unsaved changes exist."""
+        if not self._on_title_change:
+            return
+        base = Path(self._current_file_path).name if self._current_file_path else "Sin t\u00edtulo"
+        mark = "\u25cf " if self._has_unsaved_changes() else ""
+        self._on_title_change(f"{mark}{base}")
 
     def _has_unsaved_changes(self) -> bool:
         """Return True if the editor has changes not yet saved to disk."""
@@ -739,7 +840,7 @@ class InputOutputFrame(BaseFrame):
         AssemblyManualDialog(self, yaml_text=yaml_text)
 
     def export_all(self):
-        file_name = asksaveasfilename(title="Export All Formats")
+        file_name = asksaveasfilename(title="Exportar todos los formatos")
         if file_name is None or file_name.strip() == "":
             return
 
@@ -765,12 +866,11 @@ class InputOutputFrame(BaseFrame):
             except (ExecutableNotFound, FileNotFoundError):
                 showerror(
                     "Error",
-                    "Graphviz executable not found; Make sure that the "
-                    "executable is installed and in your system PATH",
+                    "No se encontró Graphviz. Asegúrate de que está instalado y en el PATH del sistema.",
                 )
                 return
             except Exception as e:
-                showerror("Error", f"An unexpected error occurred:\n{e}")
+                showerror("Error inesperado", f"Ha ocurrido un error inesperado:\n{e}")
                 return
 
     def parse_text(self, silent=False):
@@ -805,33 +905,32 @@ class InputOutputFrame(BaseFrame):
                         break
                 self._status_bar.set_status(ok=False, message=f"YAML: {str(e)[:80]}")
                 if not silent:
-                    showerror("Parse Error", f"Input is invalid: {e}")
+                    showerror("Error de sintaxis", f"El YAML no es válido: {e}")
                 return
             except (ExecutableNotFound, FileNotFoundError):
-                self._status_bar.set_status(ok=False, message="Graphviz not found in PATH")
+                self._status_bar.set_status(ok=False, message="Graphviz no encontrado en el PATH")
                 if not silent:
                     showerror(
                         "Error",
-                        "Graphviz executable not found; Make sure that the "
-                        "executable is installed and in your system PATH",
+                        "No se encontró Graphviz. Asegúrate de que está instalado y en el PATH del sistema.",
                     )
                 return
             except Exception as e:
                 msg = str(e)
                 # Provide a specific hint when an image file can't be found
                 if "not found in any of the following locations" in msg and not self._current_file_path:
-                    self._status_bar.set_status(ok=False, message="Image not found – use File > Open or the 📍 button")
+                    self._status_bar.set_status(ok=False, message="Imagen no encontrada – usa Archivo > Abrir o el botón 📍")
                     if not silent:
                         showerror(
-                            "Image not found",
-                            f"{msg}\n\nTo resolve this, either:\n"
-                            "• Use File > Open to open the .yaml file from its folder\n"
-                            "• Or click the 📍 button in the toolbar to set the image search folder"
+                            "Imagen no encontrada",
+                            f"{msg}\n\nPara solucionar esto:\n"
+                            "• Usa Archivo > Abrir para abrir el .yaml desde su carpeta\n"
+                            "• O haz clic en el botón 📍 para configurar la carpeta de imágenes"
                         )
                 else:
                     self._status_bar.set_status(ok=False, message=msg[:100])
                     if not silent:
-                        showerror("Error", f"An unexpected error occurred:\n{e}")
+                        showerror("Error inesperado", f"Ha ocurrido un error inesperado:\n{e}")
                 return
 
         self._text_entry_frame.highlight_line(None)
@@ -852,7 +951,7 @@ class StructureViewFrame(BaseFrame):
         loglevel=logging.INFO,
     ):
         super().__init__(parent=parent, loglevel=loglevel)
-
+        self.configure(bg="#d4d0c8", relief="flat")
         self._harness = harness
         self._on_update_callback = on_update_callback
 
@@ -860,7 +959,7 @@ class StructureViewFrame(BaseFrame):
 
     def _load_connector_dialog(self, connector: Connector):
         top = ToplevelBase(self)
-        top.title("Add Connector")
+        top.title("Añadir conector")
 
         def on_save(connector_data):
             top.destroy()
@@ -900,8 +999,9 @@ class StructureViewFrame(BaseFrame):
     def refresh(self, execute_callback: bool = False):
         for child in self.winfo_children():
             child.destroy()
+        self.configure(bg="#d4d0c8")
 
-        NormLabel(self, text="Harness Elements:").grid(row=0, column=0, sticky="ew")
+        NormLabel(self, text="Elementos del arnés:", bg="#d4d0c8").grid(row=0, column=0, sticky="ew", padx=(4, 6))
 
         if self._harness.connectors == {} and self._harness.cables == {}:
             # a nag screen; todo: replace when wireviz is updated so
@@ -911,11 +1011,11 @@ class StructureViewFrame(BaseFrame):
                 "`Harness` instance; Perhaps the "
                 "instance is blank?"
             )
-            NormLabel(self, text="(none)").grid(row=0, column=1, sticky="ew")
+            NormLabel(self, text="(ninguno)", bg="#d4d0c8").grid(row=0, column=1, sticky="ew")
 
         c = 1
         for connector in self._harness.connectors:
-            conn_label = LinkLabel(self, text=f"{connector}")
+            conn_label = LinkLabel(self, text=f"{connector}", bg="#d4d0c8")
             conn_label.grid(row=0, column=c, sticky="ew")
             conn_label.bind(
                 "<Button-1>", lambda _, cl=connector: self._load_connector_dialog(cl)
@@ -926,6 +1026,7 @@ class StructureViewFrame(BaseFrame):
             cable_label = LinkLabel(
                 self,
                 text=f"{cable}",
+                bg="#d4d0c8",
             )
             cable_label.grid(row=0, column=c, sticky="ew")
             cable_label.bind("<Button-1>", lambda _, cb=cable: print(cb))
@@ -943,7 +1044,7 @@ class _StatusBar(BaseFrame):
         self.configure(bg="#f0f0f0", relief="sunken", bd=1)
 
         self._file_label = tk.Label(
-            self, text="No file open", anchor="w",
+            self, text="Ningún archivo abierto", anchor="w",
             bg="#f0f0f0", font=("Arial", 9), fg="#666666"
         )
         self._file_label.grid(row=0, column=0, sticky="ew", padx=6, pady=2)
@@ -953,6 +1054,12 @@ class _StatusBar(BaseFrame):
             bg="#f0f0f0", font=("Arial", 9, "bold")
         )
         self._status_label.grid(row=0, column=1, sticky="e", padx=6, pady=2)
+
+        self._cursor_label = tk.Label(
+            self, text="Ln 1, Col 1", anchor="e",
+            bg="#f0f0f0", font=("Arial", 9), fg="#888888"
+        )
+        self._cursor_label.grid(row=0, column=2, sticky="e", padx=(0, 6), pady=2)
 
         self.grid_columnconfigure(0, weight=1)
 
@@ -966,7 +1073,7 @@ class _StatusBar(BaseFrame):
         self._update_file_label()
 
     def _update_file_label(self):
-        base = getattr(self, "_filepath", "No file open")
+        base = getattr(self, "_filepath", "Ningún archivo abierto")
         hint = getattr(self, "_img_hint", "")
         self._file_label.configure(text=f"{base}{hint}", fg="#333333")
 
@@ -977,8 +1084,14 @@ class _StatusBar(BaseFrame):
             short = message[:70] if message else "Error"
             self._status_label.configure(text=f"\u2718 {short}", fg="#cc0000")
 
+    def set_cursor_pos(self, line: int, col: int):
+        self._cursor_label.configure(text=f"Ln {line}, Col {col + 1}")
+
 
 class ButtonFrame(BaseFrame):
+    _BG  = "#d4d0c8"   # Win98 system face
+    _ACT = "#ece9e4"   # active/hover
+
     def __init__(
         self,
         parent,
@@ -996,104 +1109,238 @@ class ButtonFrame(BaseFrame):
         loglevel=logging.INFO,
     ):
         super().__init__(parent, loglevel=loglevel)
+        self.configure(bg=self._BG)
+
+        _btn = dict(
+            bg=self._BG, activebackground=self._ACT,
+            relief="raised", bd=2, cursor="hand2",
+            highlightthickness=0,
+        )
+
+        def _sep(col: int):
+            """Thin vertical Win98-style separator between button groups."""
+            tk.Frame(self, bg="#808080", width=2).grid(
+                row=0, column=col, sticky="ns", padx=3, pady=3,
+            )
 
         c = 0
+        # ── Group 1: add structure elements ──────────────────────────────
         self._add_conn_img = tk.PhotoImage(data=add_box_fill)
         add_conn_btn = tk.Button(
-            self, image=self._add_conn_img, command=on_click_add_connector
+            self, image=self._add_conn_img, command=on_click_add_connector, **_btn
         )
-        add_conn_btn.grid(row=0, column=c, sticky="ew")
-        ToolTip(add_conn_btn, "Add Connector")
+        add_conn_btn.grid(row=0, column=c, padx=1, pady=2)
+        ToolTip(add_conn_btn, "Añadir conector")
 
         c += 1
         self._add_cable_img = tk.PhotoImage(data=add_circle_fill)
         add_cable_btn = tk.Button(
-            self, image=self._add_cable_img, command=on_click_add_cable
+            self, image=self._add_cable_img, command=on_click_add_cable, **_btn
         )
-        add_cable_btn.grid(row=0, column=c, sticky="ew")
-        ToolTip(add_cable_btn, "Add Cable")
+        add_cable_btn.grid(row=0, column=c, padx=1, pady=2)
+        ToolTip(add_cable_btn, "Añadir cable")
 
         c += 1
         self._add_connect_img = tk.PhotoImage(data=links_fill)
         add_connection_btn = tk.Button(
-            self, image=self._add_connect_img, command=on_click_add_connection
+            self, image=self._add_connect_img, command=on_click_add_connection, **_btn
         )
-        add_connection_btn.grid(row=0, column=c, sticky="ew")
-        ToolTip(add_connection_btn, "Add Connection")
+        add_connection_btn.grid(row=0, column=c, padx=1, pady=2)
+        ToolTip(add_connection_btn, "Añadir conexión")
 
         c += 1
         self._add_mate_img = tk.PhotoImage(data=add_box_fill)
         add_mate_btn = tk.Button(
-            self, image=self._add_mate_img, command=on_click_add_mate
+            self, image=self._add_mate_img, command=on_click_add_mate, **_btn
         )
-        add_mate_btn.grid(row=0, column=c, sticky="ew")
-        ToolTip(add_mate_btn, "Mate Connectors")
+        add_mate_btn.grid(row=0, column=c, padx=1, pady=2)
+        ToolTip(add_mate_btn, "Conectar pines")
 
+        c += 1; _sep(c)
+
+        # ── Group 2: export / refresh ─────────────────────────────────────
         c += 1
         self._export_img = tk.PhotoImage(data=folder_transfer_fill)
         save_img_btn = tk.Button(
-            self, image=self._export_img, command=on_click_save_image
+            self, image=self._export_img, command=on_click_save_image, **_btn
         )
-        save_img_btn.grid(row=0, column=c, sticky="ew")
-        ToolTip(save_img_btn, "Save Graph Image (PNG)")
+        save_img_btn.grid(row=0, column=c, padx=1, pady=2)
+        ToolTip(save_img_btn, "Guardar imagen del diagrama (PNG)")
 
         c += 1
         self._export_all_img = tk.PhotoImage(data=folder_transfer_fill)
         export_img_btn = tk.Button(
-            self, image=self._export_all_img, command=on_click_export
+            self, image=self._export_all_img, command=on_click_export, **_btn
         )
-        export_img_btn.grid(row=0, column=c, sticky="ew")
-        ToolTip(export_img_btn, "Export All (PNG, SVG, HTML, TSV)")
+        export_img_btn.grid(row=0, column=c, padx=1, pady=2)
+        ToolTip(export_img_btn, "Exportar todo (PNG, SVG, HTML, TSV)")
 
         c += 1
         self._refresh_img = tk.PhotoImage(data=refresh_fill)
-        refresh_img_btn = HeadButton(
-            self, image=self._refresh_img, command=on_click_refresh
+        refresh_img_btn = tk.Button(
+            self, image=self._refresh_img, command=on_click_refresh, **_btn
         )
-        refresh_img_btn.grid(row=0, column=c, sticky="ew")
-        ToolTip(refresh_img_btn, "Refresh (Ctrl+L)")
+        refresh_img_btn.grid(row=0, column=c, padx=1, pady=2)
+        ToolTip(refresh_img_btn, "Actualizar (Ctrl+L)")
 
+        c += 1; _sep(c)
+
+        # ── Group 3: optional utilities ───────────────────────────────────
         if on_click_set_image_path:
             c += 1
             self._imgpath_img = tk.PhotoImage(data=map_pin_add_fill)
             imgpath_btn = tk.Button(
-                self, image=self._imgpath_img, command=on_click_set_image_path
+                self, image=self._imgpath_img, command=on_click_set_image_path, **_btn
             )
-            imgpath_btn.grid(row=0, column=c, sticky="ew")
-            ToolTip(imgpath_btn, "Set image search folder")
+            imgpath_btn.grid(row=0, column=c, padx=1, pady=2)
+            ToolTip(imgpath_btn, "Directorio de búsqueda de imágenes")
 
         if on_click_edit_metadata:
             c += 1
             meta_btn = tk.Button(
-                self, text="≡", font=("Arial", 11, "bold"),
-                command=on_click_edit_metadata,
-                width=2, cursor="hand2",
-                relief="flat", bg="#f0ede0", activebackground="#ddd8c0"
+                self, text="≡", font=("Segoe UI", 10, "bold"),
+                command=on_click_edit_metadata, width=2, **_btn
             )
-            meta_btn.grid(row=0, column=c, sticky="ew", padx=(4, 0))
+            meta_btn.grid(row=0, column=c, padx=1, pady=2)
             ToolTip(meta_btn, "Editar Metadatos del documento")
 
         if on_click_syntax_help:
             c += 1
             help_btn = tk.Button(
-                self, text="?", font=("Arial", 11, "bold"),
-                command=on_click_syntax_help,
-                width=2, cursor="hand2",
-                relief="flat", bg="#e8f0fe", activebackground="#c5d8fd"
+                self, text="?", font=("Segoe UI", 10, "bold"),
+                command=on_click_syntax_help, width=2, **_btn
             )
-            help_btn.grid(row=0, column=c, sticky="ew", padx=(4, 0))
+            help_btn.grid(row=0, column=c, padx=1, pady=2)
             ToolTip(help_btn, "Mostrar/Ocultar Referencia de Sintaxis (F1)")
 
         if on_click_generate_manual:
             c += 1
             manual_btn = tk.Button(
-                self, text="📋", font=("Arial", 11),
-                command=on_click_generate_manual,
-                width=2, cursor="hand2",
-                relief="flat", bg="#e8fee8", activebackground="#c5fdc5"
+                self, text="📋", font=("Segoe UI", 10),
+                command=on_click_generate_manual, width=2, **_btn
             )
-            manual_btn.grid(row=0, column=c, sticky="ew", padx=(4, 0))
+            manual_btn.grid(row=0, column=c, padx=1, pady=2)
             ToolTip(manual_btn, "Generar Manual de Ensamblaje")
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# _SearchBar  – barra de búsqueda inline para el editor YAML
+# ───────────────────────────────────────────────────────────────────────────────
+
+
+class _SearchBar(tk.Frame):
+    """Barra de búsqueda/filtrado inline para el editor YAML (Ctrl+F / Escape)."""
+
+    _BG = "#eef0f4"
+
+    def __init__(self, parent, text_widget: tk.Text):
+        super().__init__(parent, bg=self._BG, relief="flat", bd=0)
+        self._text = text_widget
+        self._matches: list = []
+        self._current: int = -1
+
+        _lbl = dict(bg=self._BG, font=("Segoe UI", 9), fg="#444")
+        _btn = dict(bg=self._BG, relief="flat", font=("Segoe UI", 9),
+                    cursor="hand2", activebackground="#dde3ea", bd=0)
+
+        tk.Label(self, text="Buscar:", **_lbl).pack(side=tk.LEFT, padx=(8, 2), pady=3)
+
+        self._var = tk.StringVar()
+        self._var.trace_add("write", lambda *_: self._search())
+        self._entry = tk.Entry(
+            self, textvariable=self._var, font=("Consolas", 10),
+            relief="solid", bd=1, width=28,
+            highlightthickness=1, highlightcolor="#0d1b2a",
+        )
+        self._entry.pack(side=tk.LEFT, pady=3)
+        self._entry.bind("<Return>", lambda _: self._next())
+        self._entry.bind("<Escape>", lambda _: self.hide())
+
+        self._count_var = tk.StringVar(value="")
+        tk.Label(self, textvariable=self._count_var, **_lbl, width=9,
+                 anchor="w").pack(side=tk.LEFT, padx=(6, 0))
+
+        tk.Button(self, text="▲", command=self._prev, **_btn).pack(side=tk.LEFT, padx=2, pady=2)
+        tk.Button(self, text="▼", command=self._next, **_btn).pack(side=tk.LEFT, padx=2, pady=2)
+
+        self._case_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            self, text="Aa", variable=self._case_var,
+            bg=self._BG, font=("Segoe UI", 8), activebackground=self._BG,
+            command=self._search,
+        ).pack(side=tk.LEFT, padx=6)
+
+        tk.Button(self, text="✕", command=self.hide,
+                  fg="#888", **_btn).pack(side=tk.RIGHT, padx=6, pady=2)
+
+        self._text.tag_config("_srch_match",   background="#FFEB3B")
+        self._text.tag_config("_srch_current", background="#FF8C00", foreground="white")
+
+    # ── Público ───────────────────────────────────────────────────────────────
+
+    def show(self):
+        self.grid()
+        self._entry.focus_set()
+        self._entry.select_range(0, "end")
+        self._search()
+
+    def hide(self):
+        self.grid_remove()
+        self._clear()
+        self._text.focus_set()
+
+    # ── Privado ──────────────────────────────────────────────────────────────
+
+    def _search(self, *_):
+        self._clear()
+        query = self._var.get()
+        if not query:
+            self._count_var.set("")
+            return
+        nocase = not self._case_var.get()
+        start = "1.0"
+        qlen = len(query)
+        while True:
+            pos = self._text.search(query, start, stopindex="end", nocase=nocase)
+            if not pos:
+                break
+            end = f"{pos}+{qlen}c"
+            self._text.tag_add("_srch_match", pos, end)
+            self._matches.append(pos)
+            start = end
+        if self._matches:
+            self._current = 0
+            self._highlight_current()
+        else:
+            self._count_var.set("Sin resultados")
+
+    def _next(self):
+        if not self._matches:
+            return
+        self._current = (self._current + 1) % len(self._matches)
+        self._highlight_current()
+
+    def _prev(self):
+        if not self._matches:
+            return
+        self._current = (self._current - 1) % len(self._matches)
+        self._highlight_current()
+
+    def _highlight_current(self):
+        self._text.tag_remove("_srch_current", "1.0", "end")
+        if 0 <= self._current < len(self._matches):
+            pos = self._matches[self._current]
+            end = f"{pos}+{len(self._var.get())}c"
+            self._text.tag_add("_srch_current", pos, end)
+            self._text.tag_raise("_srch_current")
+            self._text.see(pos)
+            self._count_var.set(f"{self._current + 1} / {len(self._matches)}")
+
+    def _clear(self):
+        self._text.tag_remove("_srch_match",   "1.0", "end")
+        self._text.tag_remove("_srch_current", "1.0", "end")
+        self._matches.clear()
+        self._current = -1
 
 
 class TextEntryFrame(BaseFrame):
@@ -1107,6 +1354,8 @@ class TextEntryFrame(BaseFrame):
 
         self._on_update_callback = on_update_callback
         self._after_id = None
+        self._on_change_callback = None   # fires immediately on each keystroke
+        self._cursor_callback = None      # fires with (line, col) on cursor move
 
         # ── Line numbers canvas (column 0) ────────────────────────────────
         self._line_canvas = tk.Canvas(
@@ -1131,6 +1380,9 @@ class TextEntryFrame(BaseFrame):
             autoseparators=True,
             maxundo=-1,
             wrap="none",
+            font=("Consolas", 11),
+            padx=6,
+            pady=4,
             yscrollcommand=self._on_text_vscroll,
             xscrollcommand=self._h_scroll.set,
         )
@@ -1140,6 +1392,7 @@ class TextEntryFrame(BaseFrame):
 
         self._text.bind("<Control-l>", self._on_ctrl_l)
         self._text.bind("<KeyRelease>", self._on_key_release)
+        self._text.bind("<ButtonRelease-1>", self._update_cursor_pos)
         # Redo: Ctrl+Y and Ctrl+Shift+Z (Ctrl+Z undo is native with undo=True)
         self._text.bind("<Control-y>", lambda e: self._redo())
         self._text.bind("<Control-Shift-Z>", lambda e: self._redo())
@@ -1148,6 +1401,13 @@ class TextEntryFrame(BaseFrame):
         self._text.bind("<Shift-Tab>", self._on_shift_tab)
         self._text.bind("<Return>", self._on_return)
         self._text.tag_config("highlight", background="#FFEB3B")
+
+        # ── Search bar (Ctrl+F / Escape) ───────────────────────────────────
+        self._search_bar = _SearchBar(self, self._text)
+        self._search_bar.grid(row=2, column=0, columnspan=3, sticky="ew")
+        self._search_bar.grid_remove()
+        self._text.bind("<Control-f>", self._show_search)
+        self._text.bind("<Escape>",    self._on_escape)
 
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)  # text column expands
@@ -1191,6 +1451,26 @@ class TextEntryFrame(BaseFrame):
     def _on_key_release(self, _event):
         self._trigger_update(immediate=False)
         self._update_line_numbers()
+        self._update_cursor_pos()
+        if self._on_change_callback:
+            self._on_change_callback()
+
+    def _update_cursor_pos(self, _event=None):
+        try:
+            idx = self._text.index("insert")
+            line, col = map(int, idx.split("."))
+            if self._cursor_callback:
+                self._cursor_callback(line, col)
+        except Exception:
+            pass
+
+    def set_change_callback(self, callback):
+        """Callback fired immediately on every keystroke (not debounced)."""
+        self._on_change_callback = callback
+
+    def set_cursor_callback(self, callback):
+        """Callback fired with (line, col) whenever cursor moves."""
+        self._cursor_callback = callback
 
     def _on_ctrl_l(self, _event):
         self._trigger_update(immediate=True)
@@ -1201,6 +1481,17 @@ class TextEntryFrame(BaseFrame):
             self._text.edit_redo()
         except tk.TclError:
             pass
+
+    # ── Buscar (Ctrl+F) ───────────────────────────────────────────────────
+
+    def _show_search(self, _=None) -> str:
+        self._search_bar.show()
+        return "break"
+
+    def _on_escape(self, _=None) -> str:
+        if self._search_bar.winfo_ismapped():
+            self._search_bar.hide()
+            return "break"
 
     # ── YAML smart indentation ────────────────────────────────────────────
 
@@ -1311,6 +1602,7 @@ class TextEntryFrame(BaseFrame):
 
         if line_number is not None:
             self._text.tag_add("highlight", f"{line_number}.0", f"{line_number}.40")
+            self._text.see(f"{line_number}.0")
 
 
 class HarnessViewFrame(BaseFrame):

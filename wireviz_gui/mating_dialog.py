@@ -27,13 +27,13 @@ class AddMateDialog(BaseFrame):
         r = 0
         HeadLabel(
             self,
-            text="Mate Connectors",
+            text="Conectar pines",
         ).grid(row=r, column=0, columnspan=2, sticky="ew")
 
         r += 1
         NormLabel(
             self,
-            text="From:",
+            text="Desde:",
         ).grid(row=r, column=0, sticky="e")
         connectors = self._read_connectors()
         self._from_connector_cb = ttk.Combobox(self, values=connectors)
@@ -44,7 +44,7 @@ class AddMateDialog(BaseFrame):
         r += 1
         NormLabel(
             self,
-            text="To:",
+            text="Hasta:",
         ).grid(row=r, column=0, sticky="e")
         self._to_connector_cb = ttk.Combobox(self, values=connectors)
         self._to_connector_cb.grid(row=r, column=1, sticky="ew")
@@ -55,14 +55,14 @@ class AddMateDialog(BaseFrame):
         self._arrow_type_var = tk.StringVar(value="double")
         tk.Radiobutton(
             self,
-            text="Whole Connector (==>)",
+            text="Conector completo (==>)",
             variable=self._arrow_type_var,
             value="double",
             command=self._update_arrow_directions,
         ).grid(row=r, column=0, sticky="w")
         tk.Radiobutton(
             self,
-            text="Pin-to-Pin (-->)",
+            text="Pin a pin (-->)",
             variable=self._arrow_type_var,
             value="single",
             command=self._update_arrow_directions,
@@ -77,7 +77,7 @@ class AddMateDialog(BaseFrame):
         r += 1
         NormButton(
             self,
-            text="Save Mate",
+            text="Guardar conexión",
             command=self._save,
         ).grid(row=r, column=0, columnspan=2, sticky="ew")
 
@@ -130,7 +130,7 @@ class AddMateDialog(BaseFrame):
         arrow = self._arrow_direction_var.get()
 
         if not from_connector or not to_connector:
-            showerror("Error", 'Please select both "From" and "To" connectors.')
+            showerror("Error", "Selecciona los conectores de origen y destino.")
             return
 
         # Return a python list representing the connection: [from, arrow, to]

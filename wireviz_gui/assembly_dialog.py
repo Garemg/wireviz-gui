@@ -15,6 +15,8 @@ from typing import Callable, Optional
 
 from PIL import Image, ImageTk
 
+from tk_tools import ToolTip
+
 from wireviz_gui._base import NormButton, ToplevelBase
 from wireviz_gui.assembly_spec import (
     BLOCK_TYPES,
@@ -171,8 +173,10 @@ class _BlockWidget(tk.LabelFrame):
         tk.Button(bar, text="▲", command=on_up,     **btn_cfg).pack(side=tk.RIGHT, pady=2)
         tk.Button(bar, text="▼", command=on_down,   **btn_cfg).pack(side=tk.RIGHT, pady=2)
         if on_duplicate:
-            tk.Button(bar, text="⊕", command=on_duplicate,
-                      **{**btn_cfg, "fg": "#90ee90"}).pack(side=tk.RIGHT, pady=2, padx=(0, 2))
+            dup_btn = tk.Button(bar, text="⊕", command=on_duplicate,
+                      **{**btn_cfg, "fg": "#90ee90", "font": ("Arial", 13)})
+            dup_btn.pack(side=tk.RIGHT, pady=2, padx=(0, 2))
+            ToolTip(dup_btn, "Duplicar este bloque")
         tk.Button(bar, text="✕", command=on_delete,
                   **{**btn_cfg, "fg": "#ff9999"}).pack(side=tk.RIGHT, pady=2, padx=(0, 4))
 
@@ -315,13 +319,13 @@ class AssemblyManualDialog(ToplevelBase):
                  font=("Arial", 14, "bold")).pack(side=tk.LEFT, padx=12)
 
         # Header fields row
-        meta = tk.Frame(self, bg=_LGRAY, pady=4)
-        meta.pack(fill=tk.X, padx=8, pady=(6, 2))
+        meta = tk.Frame(self, bg="#d4d0c8", pady=4, bd=1, relief="groove")
+        meta.pack(fill=tk.X, padx=0, pady=0)
 
         def _mf(label, default="", width=20):
-            tk.Label(meta, text=label, font=("Arial", 9), bg=_LGRAY).pack(side=tk.LEFT, padx=(8, 0))
+            tk.Label(meta, text=label, font=("Segoe UI", 9), bg="#d4d0c8").pack(side=tk.LEFT, padx=(8, 0))
             var = tk.StringVar(value=default)
-            tk.Entry(meta, textvariable=var, width=width, font=("Arial", 9)).pack(side=tk.LEFT, padx=(2, 6))
+            tk.Entry(meta, textvariable=var, width=width, font=("Segoe UI", 9), relief="sunken", bd=2).pack(side=tk.LEFT, padx=(2, 6))
             return var
 
         self._ref_var      = _mf("Referencia:", width=22)
@@ -330,20 +334,20 @@ class AssemblyManualDialog(ToplevelBase):
         self._fecha_var    = _mf("Fecha:", default=_today(), width=12)
 
         # Toolbar
-        toolbar = tk.Frame(self, bg=_DGRAY, pady=3)
-        toolbar.pack(fill=tk.X, padx=8)
+        toolbar = tk.Frame(self, bg="#d4d0c8", pady=2, bd=1, relief="groove")
+        toolbar.pack(fill=tk.X, padx=0, pady=0)
 
         for btype in BLOCK_TYPES:
-            color = _BlockWidget._TYPE_COLORS.get(btype, "#f0f0f0")
             tk.Button(
-                toolbar, text=f"+ {btype}", font=("Arial", 8),
-                bg=color, relief="flat", cursor="hand2",
+                toolbar, text=f"+ {btype}", font=("Segoe UI", 8),
+                bg="#d4d0c8", activebackground="#ece9e4",
+                relief="raised", bd=2, cursor="hand2",
                 command=lambda t=btype: self._add_block(t),
-            ).pack(side=tk.LEFT, padx=2, pady=2)
+            ).pack(side=tk.LEFT, padx=1, pady=2)
 
         # Scrollable block area
-        scroll_container = tk.Frame(self)
-        scroll_container.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
+        scroll_container = tk.Frame(self, bg="#d4d0c8")
+        scroll_container.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
         self._canvas = tk.Canvas(scroll_container, bg="white")
         sb = ttk.Scrollbar(scroll_container, orient="vertical", command=self._canvas.yview)
@@ -360,21 +364,18 @@ class AssemblyManualDialog(ToplevelBase):
         self._canvas.bind_all("<MouseWheel>", self._on_mousewheel)
 
         # Bottom buttons
-        btn_row = tk.Frame(self, bg=_LGRAY, pady=6)
-        btn_row.pack(fill=tk.X, padx=8)
+        btn_row = tk.Frame(self, bg="#d4d0c8", bd=1, relief="groove", pady=3)
+        btn_row.pack(fill=tk.X, padx=0, pady=0)
 
-        tk.Button(btn_row, text="📂 Abrir",
-                  font=("Arial", 10), bg="#555", fg="white", relief="flat",
-                  command=self._load_spec).pack(side=tk.LEFT, padx=6)
-        tk.Button(btn_row, text="💾 Guardar",
-                  font=("Arial", 10), bg="#555", fg="white", relief="flat",
-                  command=self._save_spec).pack(side=tk.LEFT, padx=2)
-        tk.Button(btn_row, text="⟳ Vista previa HTML",
-                  font=("Arial", 10), bg="#005580", fg="white", relief="flat",
-                  command=self._preview).pack(side=tk.LEFT, padx=6)
+        _bb = dict(font=("Segoe UI", 9), bg="#d4d0c8", activebackground="#ece9e4",
+                   relief="raised", bd=2, cursor="hand2")
+        tk.Button(btn_row, text="📂 Abrir",             command=self._load_spec, **_bb).pack(side=tk.LEFT, padx=2, pady=4)
+        tk.Button(btn_row, text="💾 Guardar",           command=self._save_spec, **_bb).pack(side=tk.LEFT, padx=2, pady=4)
+        tk.Button(btn_row, text="⟳ Vista previa HTML", command=self._preview,   **_bb).pack(side=tk.LEFT, padx=2, pady=4)
         tk.Button(btn_row, text="📦 Exportar ZIP",
-                  font=("Arial", 11, "bold"), bg="#1a6b1a", fg="white", relief="flat",
-                  command=self._generate).pack(side=tk.RIGHT, padx=6)
+                  font=("Segoe UI", 9, "bold"), bg="#d4d0c8", activebackground="#ece9e4",
+                  relief="raised", bd=2, cursor="hand2",
+                  command=self._generate).pack(side=tk.RIGHT, padx=6, pady=4)
 
         self._rebuild_blocks()
 
@@ -614,7 +615,7 @@ class AssemblyManualDialog(ToplevelBase):
             def _cb(msg: str) -> None:
                 self.after(0, lambda m=msg: prog.set_status(m))
             try:
-                result_holder["ok"] = export_manual_zip(spec, path, progress_callback=_cb)
+                result_holder["ok"], result_holder["pdf_error"] = export_manual_zip(spec, path, progress_callback=_cb)
             except Exception as exc:
                 result_holder["error"] = exc
 
@@ -626,7 +627,15 @@ class AssemblyManualDialog(ToplevelBase):
             if "error" in result_holder:
                 showerror("Error", f"Error al exportar:\n{result_holder['error']}")
             else:
-                showinfo("Exportado", f"Manual exportado en:\n{result_holder['ok']}")
+                pdf_err = result_holder.get("pdf_error")
+                pdf_note = (
+                    ""
+                    if not pdf_err
+                    else (
+                        f"\n\n\u26a0 PDFs no generados:\n{pdf_err}"
+                    )
+                )
+                showinfo("Exportado", f"Manual exportado en:\n{result_holder['ok']}{pdf_note}")
                 self.destroy()
 
         t = threading.Thread(target=_run, daemon=True)

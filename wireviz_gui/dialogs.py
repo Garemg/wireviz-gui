@@ -18,7 +18,7 @@ def _name_is_duplicated(new_name, harness):
     names += list([c for c in harness.cables.keys()])
 
     if new_name in names:
-        showerror("Invalid Entry", '"Name" is duplicated')
+        showerror("Entrada inválida", '"Nombre" duplicado')
         return True
 
     return False
@@ -93,13 +93,13 @@ class AddConnectorFrame(BaseFrame):
         r = 0
         HeadLabel(
             self,
-            text="Add Connector",
+            text="Añadir conector",
         ).grid(row=r, column=0, columnspan=2, sticky="ew")
 
         r += 1
         NormLabel(
             self,
-            text="Name:",
+            text="Nombre:",
         ).grid(row=r, column=0, sticky="e")
         self._name_entry = tk.Entry(self)
         self._name_entry.grid(row=r, column=1, sticky="ew")
@@ -107,7 +107,7 @@ class AddConnectorFrame(BaseFrame):
         r += 1
         NormLabel(
             self,
-            text="Manufacturer:",
+            text="Fabricante:",
         ).grid(row=r, column=0, sticky="e")
         self._manuf_entry = tk.Entry(self)
         self._manuf_entry.grid(row=r, column=1, sticky="ew")
@@ -115,7 +115,7 @@ class AddConnectorFrame(BaseFrame):
         r += 1
         NormLabel(
             self,
-            text="Manuf. Part Number:",
+            text="Ref. fabricante (MPN):",
         ).grid(row=r, column=0, sticky="e")
         self._mpn_entry = tk.Entry(self)
         self._mpn_entry.grid(row=r, column=1, sticky="ew")
@@ -123,7 +123,7 @@ class AddConnectorFrame(BaseFrame):
         r += 1
         NormLabel(
             self,
-            text="Internal Part Number:",
+            text="Ref. interna (PN):",
         ).grid(row=r, column=0, sticky="e")
         self._ipm_entry = tk.Entry(self)
         self._ipm_entry.grid(row=r, column=1, sticky="ew")
@@ -131,7 +131,7 @@ class AddConnectorFrame(BaseFrame):
         r += 1
         NormLabel(
             self,
-            text="Type:",
+            text="Tipo:",
         ).grid(row=r, column=0, sticky="e")
         self._type_entry = tk.Entry(self)
         self._type_entry.grid(row=r, column=1, sticky="ew")
@@ -139,7 +139,7 @@ class AddConnectorFrame(BaseFrame):
         r += 1
         NormLabel(
             self,
-            text="Sub-Type:",
+            text="Subtipo:",
         ).grid(row=r, column=0, sticky="e")
         self._subtype_entry = tk.Entry(self)
         self._subtype_entry.grid(row=r, column=1, sticky="ew")
@@ -151,14 +151,14 @@ class AddConnectorFrame(BaseFrame):
         r += 1
         NormButton(
             self,
-            text="Add Pin",
+            text="Añadir pin",
             command=lambda: self._pins_frame.add_pin(),
         ).grid(row=r, column=0, columnspan=2, sticky="ew")
 
         r += 1
         NormButton(
             self,
-            text="Save Connector",
+            text="Guardar conector",
             command=self._save,
         ).grid(row=r, column=0, columnspan=2, sticky="ew")
 
@@ -166,7 +166,7 @@ class AddConnectorFrame(BaseFrame):
             r += 1
             NormButton(
                 self,
-                text="Delete Connector",
+                text="Eliminar conector",
                 command=self._delete,
             ).grid(row=r, column=0, columnspan=2, sticky="ew")
             self._load()
@@ -210,7 +210,7 @@ class AddConnectorFrame(BaseFrame):
         subtype = self._subtype_entry.get().strip()
 
         if not name:
-            showerror("Invalid Input", "Name is required")
+            showerror("Entrada inválida", "El nombre es obligatorio")
             return
 
         kwargs = {}
@@ -268,7 +268,7 @@ class PinsFrame(BaseFrame):
                 frame.grid(row=i + 1, column=0, sticky="ew")
             return
 
-        tk.Label(self, text="(no pins)", **self._normal).grid(
+        tk.Label(self, text="(sin pines)", **self._normal).grid(
             row=0, column=0, sticky="ew"
         )
 
@@ -406,13 +406,13 @@ class AddCableFrame(BaseFrame):
         r = 0
         HeadLabel(
             self,
-            text="Add Cable",
+            text="Añadir cable",
         ).grid(row=r, column=0, columnspan=2, sticky="ew")
 
         r += 1
         NormLabel(
             self,
-            text="Name:",
+            text="Nombre:",
         ).grid(row=r, column=0, sticky="e")
         self._name_entry = tk.Entry(self)
         self._name_entry.grid(row=r, column=1, sticky="ew")
@@ -420,7 +420,7 @@ class AddCableFrame(BaseFrame):
         r += 1
         NormLabel(
             self,
-            text="Manufacturer:",
+            text="Fabricante:",
         ).grid(row=r, column=0, sticky="e")
         self._manuf_entry = tk.Entry(self)
         self._manuf_entry.grid(row=r, column=1, sticky="ew")
@@ -428,7 +428,7 @@ class AddCableFrame(BaseFrame):
         r += 1
         NormLabel(
             self,
-            text="Manuf. Part Number:",
+            text="Ref. fabricante (MPN):",
         ).grid(row=r, column=0, sticky="e")
         self._mpn_entry = tk.Entry(self)
         self._mpn_entry.grid(row=r, column=1, sticky="ew")
@@ -436,7 +436,7 @@ class AddCableFrame(BaseFrame):
         r += 1
         NormLabel(
             self,
-            text="Internal Part Number:",
+            text="Ref. interna (PN):",
         ).grid(row=r, column=0, sticky="e")
         self._ipm_entry = tk.Entry(self)
         self._ipm_entry.grid(row=r, column=1, sticky="ew")
@@ -444,7 +444,7 @@ class AddCableFrame(BaseFrame):
         r += 1
         NormLabel(
             self,
-            text="Type:",
+            text="Tipo:",
         ).grid(row=r, column=0, sticky="e")
         self._type_entry = tk.Entry(self)
         self._type_entry.grid(row=r, column=1, sticky="ew")
@@ -452,7 +452,7 @@ class AddCableFrame(BaseFrame):
         r += 1
         NormLabel(
             self,
-            text="Gauge Unit:",
+            text="Unidad calibre:",
         ).grid(row=r, column=0, sticky="e")
         self._gauge_unit_cb = ttk.Combobox(self, values=["AWG", "mm\u00b2"])
         self._gauge_unit_cb.grid(row=r, column=1, sticky="ew")
@@ -463,7 +463,7 @@ class AddCableFrame(BaseFrame):
         r += 1
         NormLabel(
             self,
-            text="Gauge:",
+            text="Calibre:",
         ).grid(row=r, column=0, sticky="e")
         self._gauge_cb = ttk.Combobox(self)
         self._gauge_cb.grid(row=r, column=1, sticky="ew")
@@ -476,7 +476,7 @@ class AddCableFrame(BaseFrame):
         r += 1
         NormLabel(
             self,
-            text="Length:",
+            text="Longitud:",
         ).grid(row=r, column=0, sticky="e")
         self._length_entry = tk.Entry(self)
         self._length_entry.grid(row=r, column=1, sticky="ew")
@@ -488,7 +488,7 @@ class AddCableFrame(BaseFrame):
         r += 1
         NormLabel(
             self,
-            text="Shield:",
+            text="Blindaje:",
         ).grid(row=r, column=0, sticky="e")
         self._shield_var = tk.BooleanVar()
         self._shield_var.set(False)
@@ -502,14 +502,14 @@ class AddCableFrame(BaseFrame):
         r += 1
         NormButton(
             self,
-            text="Add Wire",
+            text="Añadir hilo",
             command=lambda: self._wires_frame.add_wire(),
         ).grid(row=r, column=0, columnspan=2, sticky="ew")
 
         r += 1
         NormButton(
             self,
-            text="Save Cable",
+            text="Guardar cable",
             command=self._save,
         ).grid(row=r, column=0, columnspan=2, sticky="ew")
 
@@ -538,7 +538,7 @@ class AddCableFrame(BaseFrame):
         shield = self._shield_var.get()
 
         if not name:
-            showerror("Invalid Input", "Name is required")
+            showerror("Entrada inválida", "El nombre es obligatorio")
             return
 
         kwargs = {}
@@ -568,7 +568,7 @@ class AddCableFrame(BaseFrame):
             try:
                 kwargs["length"] = float(length)
             except ValueError as e:
-                showerror("Invalid Input", e)
+                showerror("Entrada inválida", str(e))
                 return
 
         kwargs["shield"] = shield
@@ -613,7 +613,7 @@ class WiresFrame(BaseFrame):
                 frame.grid(row=i + 1, column=0, sticky="ew")
             return
 
-        tk.Label(self, text="(no wires)", **self._normal).grid(
+        tk.Label(self, text="(sin hilos)", **self._normal).grid(
             row=0, column=0, sticky="ew"
         )
 
@@ -775,7 +775,7 @@ class AddConnectionFrame(BaseFrame):
         r = 0
         HeadLabel(
             self,
-            text="Add Connection",
+            text="Añadir conexión",
         ).grid(row=r, column=0, columnspan=3, sticky="ew")
 
         connectors, cables = self._read_names_from_yaml()
@@ -783,15 +783,15 @@ class AddConnectionFrame(BaseFrame):
         r += 1
         NormLabel(
             self,
-            text="From",
+            text="Desde",
         ).grid(row=r, column=0, sticky="ew")
         NormLabel(
             self,
-            text="Through",
+            text="Por",
         ).grid(row=r, column=1, sticky="ew")
         NormLabel(
             self,
-            text="To",
+            text="Hasta",
         ).grid(row=r, column=2, sticky="ew")
 
         r += 1
@@ -844,7 +844,7 @@ class AddConnectionFrame(BaseFrame):
         r += 1
         NormButton(
             self,
-            text="Save Connection",
+            text="Guardar conexión",
             command=self._save,
         ).grid(row=r, column=0, columnspan=3, sticky="ew")
 
@@ -989,7 +989,7 @@ class AddConnectionFrame(BaseFrame):
         to_name = self._to_connector_cb.get().strip()
 
         if not from_name or not via_name or not to_name:
-            showerror("Invalid Input", "You must select From connector, Through cable, and To connector.")
+            showerror("Entrada inválida", "Selecciona el conector origen, el cable y el conector destino.")
             return
 
         from_pin = self._parse_pin_selection(self._from_conn_pin_cb.get())
@@ -997,13 +997,13 @@ class AddConnectionFrame(BaseFrame):
         to_pin = self._parse_pin_selection(self._to_conn_pin_cb.get())
 
         if from_pin is None:
-            showerror("Invalid Input", f"Select a pin for the From connector ({from_name}).")
+            showerror("Entrada inválida", f"Selecciona un pin del conector origen ({from_name}).")
             return
         if via_pin is None:
-            showerror("Invalid Input", f"Select a wire for the cable ({via_name}).")
+            showerror("Entrada inválida", f"Selecciona un hilo del cable ({via_name}).")
             return
         if to_pin is None:
-            showerror("Invalid Input", f"Select a pin for the To connector ({to_name}).")
+            showerror("Entrada inválida", f"Selecciona un pin del conector destino ({to_name}).")
             return
 
         # Construct connection list: [{from: pin}, {via: pin}, {to: pin}]

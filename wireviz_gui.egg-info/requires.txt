@@ -1,0 +1,14 @@
+click>=8.3.1
+graphviz>=0.21
+jinja2>=3.1
+mypy>=1.19.1
+pillow>=12.1.0
+playwright>=1.40
+tk-tools>=0.17.0
+wireviz>=0.4.1
+
+[dev]
+pyinstaller>=6.18.0
+pytest>=9.0.2
+ruff>=0.14.13
+types-pyyaml>=6.0.12.20250915

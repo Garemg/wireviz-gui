@@ -3,18 +3,18 @@ from tkinter import Button, Frame, Label, Menu, PhotoImage, Toplevel
 
 from wireviz_gui.images import slightlynybbled_logo_small
 
-_norm_font = ("Arial", 12)
-_heading_font = ("Arial", 16)
+_norm_font    = ("Segoe UI", 10)
+_heading_font = ("Segoe UI", 13, "bold")
 
-_link_fg = "blue"
-_alert_fg = "red"
+_link_fg  = "#1a66cc"
+_alert_fg = "#cc2222"
 
 
 class BaseFrame(Frame):
-    _normal = {"font": ("Arial", 12)}
-    _link = {"font": ("Arial", 12), "fg": "blue"}
-    _red = {"font": ("Arial", 12), "fg": "red"}
-    _heading = {"font": ("Arial", 16)}
+    _normal  = {"font": ("Segoe UI", 10)}
+    _link    = {"font": ("Segoe UI", 10), "fg": "#1a66cc"}
+    _red     = {"font": ("Segoe UI", 10), "fg": "#cc2222"}
+    _heading = {"font": ("Segoe UI", 13, "bold")}
 
     def __init__(self, parent, loglevel, **kwargs):
         self._parent = parent

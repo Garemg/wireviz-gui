@@ -48,8 +48,8 @@ class Menu(BaseMenu):
             open_recent=open_recent,
             get_recent_files=get_recent_files,
         )
-        self.add_cascade(label="File", menu=self._file_menu)
-        self.add_cascade(label="Help", menu=HelpMenu(self._parent, about=about, syntax_reference=syntax_reference))
+        self.add_cascade(label="Archivo", menu=self._file_menu)
+        self.add_cascade(label="Ayuda", menu=HelpMenu(self._parent, about=about, syntax_reference=syntax_reference))
 
 
 class FileMenu(BaseMenu):
@@ -76,9 +76,9 @@ class FileMenu(BaseMenu):
         super().__init__(parent=parent, loglevel=loglevel, **kwargs)
 
         if new_file:
-            self.add_command(label="New (CTRL+N)", command=lambda: new_file())
+            self.add_command(label="Nuevo  Ctrl+N", command=lambda: new_file())
 
-        self.add_command(label="Open (CTRL+O)", command=lambda: open_file())
+        self.add_command(label="Abrir  Ctrl+O", command=lambda: open_file())
 
         # Recent files submenu
         if open_recent:
@@ -91,18 +91,18 @@ class FileMenu(BaseMenu):
             self.bind("<Map>", self._on_file_menu_open)
 
         self.add_separator()
-        self.add_command(label="Save (CTRL+S)", command=lambda: save())
-        self.add_command(label="Save As...", command=lambda: save_as())
+        self.add_command(label="Guardar  Ctrl+S", command=lambda: save())
+        self.add_command(label="Guardar como...", command=lambda: save_as())
         self.add_separator()
 
         export_menu = tk.Menu(self, tearoff=0)
         export_menu.add_command(
-            label="Graph Image (PNG)...", command=lambda: save_graph_image()
+            label="Imagen del diagrama (PNG)...", command=lambda: save_graph_image()
         )
         export_menu.add_command(
-            label="All Formats (PNG, SVG, HTML)...", command=lambda: export_all()
+            label="Todos los formatos (PNG, SVG, HTML)...", command=lambda: export_all()
         )
-        self.add_cascade(label="Export", menu=export_menu)
+        self.add_cascade(label="Exportar", menu=export_menu)
 
         if examples and load_example:
             examples_menu = tk.Menu(self, tearoff=0)
@@ -110,15 +110,15 @@ class FileMenu(BaseMenu):
                 examples_menu.add_command(
                     label=name, command=lambda c=content, n=name: load_example(n, c)
                 )
-            self.add_cascade(label="Examples", menu=examples_menu)
+            self.add_cascade(label="Ejemplos", menu=examples_menu)
 
         self.add_separator()
-        self.add_command(label="Refresh Image (CTRL+L)", command=lambda: refresh())
-        self.add_command(label="Reload File (CTRL+R)", command=lambda: reload_file())
+        self.add_command(label="Actualizar imagen  Ctrl+L", command=lambda: refresh())
+        self.add_command(label="Recargar archivo  Ctrl+R", command=lambda: reload_file())
 
         if close_tab:
             self.add_separator()
-            self.add_command(label="Close Tab (CTRL+W)", command=lambda: close_tab())
+            self.add_command(label="Cerrar pestaña  Ctrl+W", command=lambda: close_tab())
 
     def _populate_recent(self, files: List[str]):
         self._recent_menu.delete(0, "end")
@@ -144,7 +144,7 @@ class HelpMenu(BaseMenu):
         if syntax_reference:
             self.add_command(label="Referencia de Sintaxis (F1)", command=lambda: syntax_reference())
             self.add_separator()
-        self.add_command(label="About", command=lambda: about())
+        self.add_command(label="Acerca de", command=lambda: about())
 
 
 if __name__ == "__main__":

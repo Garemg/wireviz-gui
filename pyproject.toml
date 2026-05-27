@@ -4,7 +4,7 @@ version = "0.3.2"   # this version doesn't make its way into
                     # the package and must be manually changed
                     # in the wireviz_gui/version.py file
 readme = "readme.md"
-requires-python = ">=3.14"
+requires-python = ">=3.11"
 dependencies = [
     "click>=8.3.1",
     "graphviz>=0.21",
@@ -16,10 +16,13 @@ dependencies = [
     "wireviz>=0.4.1",
 ]
 
-[dependency-groups]
+[project.optional-dependencies]
 dev = [
     "pyinstaller>=6.18.0",
     "pytest>=9.0.2",
     "ruff>=0.14.13",
     "types-pyyaml>=6.0.12.20250915",
 ]
+
+[tool.setuptools.packages.find]
+include = ["wireviz_gui*"]

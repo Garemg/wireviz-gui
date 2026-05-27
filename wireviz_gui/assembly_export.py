@@ -4,6 +4,8 @@ import base64
 import io
 import json
 import logging
+import os
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -531,11 +533,43 @@ def export_manual_zip(
                     logger.warning("Could not extract image %s: %s", name, exc)
 
         # ── PDF export ─────────────────────────────────────────────────────
-        pdf_ok = _try_pdf_export(spec, blocks, zf, _progress)
-        if not pdf_ok:
-            logger.warning("Playwright not available or PDF export failed — PDFs not included.")
+        pdf_error = _try_pdf_export(spec, blocks, zf, _progress)
+        if pdf_error:
+            logger.warning("PDF export failed: %s", pdf_error)
 
-    return output_path
+    return output_path, pdf_error
+
+
+def _playwright_browsers_path() -> str:
+    """Persistent path for Playwright browsers, independent of PyInstaller's _MEIPASS temp dir."""
+    localappdata = os.environ.get("LOCALAPPDATA", "")
+    if localappdata:
+        return str(Path(localappdata) / "ms-playwright")
+    return str(Path.home() / ".cache" / "ms-playwright")
+
+
+def _install_chromium_browser(progress: Callable[[str], None]) -> Optional[str]:
+    """Auto-install Playwright's Chromium browser. Returns None on success, error string on failure."""
+    progress("Instalando Chromium para PDFs (solo la primera vez, ~300 MB)…")
+    try:
+        from playwright._impl._driver import compute_driver_executable  # type: ignore[import]
+        driver_exe, cli_js = compute_driver_executable()
+        cmd = [str(driver_exe), str(cli_js), "install", "chromium"] if cli_js else [str(driver_exe), "install", "chromium"]
+        env = os.environ.copy()
+        env["PLAYWRIGHT_BROWSERS_PATH"] = _playwright_browsers_path()
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=600,
+            env=env,
+        )
+        if proc.returncode == 0:
+            logger.info("Chromium instalado correctamente.")
+            return None
+        msg = proc.stderr.decode(errors="ignore")[:500].strip()
+        return f"playwright install chromium (exit {proc.returncode}): {msg}"
+    except Exception as exc:
+        return f"No se pudo instalar Chromium: {exc}"
 
 
 def _try_pdf_export(
@@ -543,15 +577,17 @@ def _try_pdf_export(
     blocks: list,
     zf: zipfile.ZipFile,
     progress: Callable[[str], None],
-) -> bool:
-    """Add PDFs to the zip using Playwright (headless Chromium). Returns True if successful."""
+) -> Optional[str]:
+    """Add PDFs to the zip using Playwright. Returns None on success, error message on failure."""
     try:
         from playwright.sync_api import sync_playwright  # type: ignore[import]
     except ImportError:
-        logger.warning("Playwright not installed. Run: pip install playwright && playwright install chromium")
-        return False
+        return "Playwright no está instalado (pip install playwright)"
 
-    try:
+    # Point Playwright to a persistent browsers directory, not the ephemeral _MEIPASS temp dir.
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = _playwright_browsers_path()
+
+    def _run_export() -> None:
         with sync_playwright() as pw:
             browser = pw.chromium.launch()
             page = browser.new_page()
@@ -581,7 +617,45 @@ def _try_pdf_export(
                 zf.writestr(f"pdf/{fname}", pdf_bytes)
 
             browser.close()
-        return True
-    except Exception as exc:
-        logger.warning("PDF export failed: %s", exc)
+
+    # First attempt
+    try:
+        _run_export()
+        return None  # success
+    except Exception as first_exc:
+        err = str(first_exc).lower()
+        # Chromium not installed → auto-install and retry once
+        needs_install = any(
+            kw in err
+            for kw in (
+                "executable doesn't exist",
+                "browser closed",
+                "not found",
+                "no such file",
+                "failed to launch",
+                "chromium",
+            )
+        )
+        if needs_install:
+            logger.info("Chromium no encontrado, instalando automáticamente…")
+            install_err = _install_chromium_browser(progress)
+            if install_err is None:
+                progress("Generando PDFs…")
+                try:
+                    _run_export()
+                    return None  # success after install
+                except Exception as exc2:
+                    return f"PDF fallido tras instalar Chromium: {exc2}"
+            return install_err
+        return str(first_exc)
+
+
+def _chromium_available() -> bool:
+    """Check whether the Playwright Chromium browser is installed."""
+    try:
+        from playwright.sync_api import sync_playwright  # type: ignore[import]
+        with sync_playwright() as pw:
+            exe = pw.chromium.executable_path
+            return Path(exe).exists()
+    except Exception:
         return False
